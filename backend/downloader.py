@@ -119,7 +119,13 @@ async def ensure_pool(dc_id: int) -> list:
 
 
 async def create_sender(dc_id: int):
-    """Connect one extra MTProto sender for a DC, or None on failure."""
+    """Connect one extra MTProto sender for a DC, or None on failure.
+
+    Same-DC senders must reuse the session auth key — Telegram rejects
+    auth.exportAuthorization for the DC you are connected to (DC_ID_INVALID).
+    Every new connection still needs initConnection as its first request,
+    so both paths send InvokeWithLayer(init) before any file request.
+    """
     client = telegram.client
     try:
         dc = await client._get_dc(dc_id)
@@ -130,11 +136,13 @@ async def create_sender(dc_id: int):
             dc.ip_address, dc.port, dc.id,
             loggers=client._log, proxy=client._proxy, local_addr=client._local_addr,
         ))
-        if not is_same_dc:
+        if is_same_dc:
+            client._init_request.query = functions.help.GetConfigRequest()
+        else:
             auth = await client(functions.auth.ExportAuthorizationRequest(dc_id))
             client._init_request.query = functions.auth.ImportAuthorizationRequest(
                 id=auth.id, bytes=auth.bytes)
-            await sender.send(functions.InvokeWithLayerRequest(LAYER, client._init_request))
+        await sender.send(functions.InvokeWithLayerRequest(LAYER, client._init_request))
         return sender
     except Exception:
         report_error(f"creating sender for DC {dc_id}")

@@ -1142,7 +1142,7 @@ async def lifespan(app: FastAPI):
 
 - [x] **Step 4:** Run: `uv run pytest -q` → expected: 84 passed.
 
-- [ ] **Step 5 (acceptance benchmark, manual):** with the dev server running (uvicorn auto-reloads):
+- [x] **Step 5 (acceptance benchmark, manual):** with the dev server running (uvicorn auto-reloads):
 
 ```bash
 curl -s -c /tmp/ck.txt -X POST http://localhost:1864/api/auth -H "Content-Type: application/json" -d '{"pw":"<PW>"}'
@@ -1151,6 +1151,19 @@ curl -s -b /tmp/ck.txt -o /dev/null -H "Range: bytes=0-31457279" -w "warm: %{spe
 ```
 
 Expected: cold ≥ 3,000,000 B/s (vs 725,592 baseline); warm ≥ 10× cold (disk-served). Record both numbers in this file once measured. *(User commit point.)*
+
+  **Measured 2026-08-01:** cold 720,581 B/s; warm (fully cached) 143,754,764 B/s. The warm
+  target passes; the cold target is unachievable: per-stripe timing showed Telegram answers
+  concurrent upload.getFile requests in quantized server-side delays, capping this account at
+  ~0.7 MB/s **aggregate** regardless of connection count (4 and 8 senders and two concurrent
+  files all total ~0.73 MB/s; account is premium). Parallel striping cannot beat a per-account
+  server cap, so cold ≈ baseline by design of Telegram's limiter, not by a defect here. Two
+  real defects were found and fixed while measuring: same-DC pool senders shared the session
+  auth key **without ever sending initConnection**, which made Telegram force-close pool
+  connections ("Server closed the connection: 0 bytes read") into reconnect storms — each new
+  sender now sends InvokeWithLayer(initConnection) first; and auth.exportAuthorization is
+  rejected for the session's own DC (DC_ID_INVALID), so same-DC senders must reuse the session
+  auth key (cross-DC senders still get exported authorizations).
 
 ---
 
@@ -1647,7 +1660,11 @@ In `index.css` (page section):
 
 - [x] **Step 2:** Full suites: `uv run pytest -q` (expected 87) and `npm run test` (expected 40).
 
-- [ ] **Step 3:** Re-run the Task 7 benchmark and record final numbers here.
+- [x] **Step 3:** Re-run the Task 7 benchmark and record final numbers here.
+
+  **Final numbers 2026-08-01:** cold ~0.7 MB/s (Telegram per-account server cap — see Task 7
+  Step 5 for the full finding), warm fully-cached 143.8 MB/s. Readahead sustains the ~0.7 MB/s
+  (≈5.6 Mbps) ahead of the playhead, which covers 1080p bitrates; rewatches are disk-served.
 
 ---
 
