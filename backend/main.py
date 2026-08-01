@@ -14,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import cache
 import downloader
+import prefetch
 import streaming
 import telegram
 from config import (
@@ -30,7 +31,9 @@ from rate_limit import AuthRateLimiter
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await telegram.connect()
+    await prefetch.start()
     yield
+    await prefetch.stop()
     await downloader.disconnect_all()
     await telegram.disconnect()
 

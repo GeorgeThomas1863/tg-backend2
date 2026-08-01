@@ -1,3 +1,5 @@
+> **Superseded:** Readahead (`READAHEAD_BLOCKS`) was replaced by the tiered background worker in `prefetch.py`, and `CACHE_MAX_GB` now defaults to 100. See `2026-08-01-preload-queue-design.md`.
+
 # Video Streaming Performance — Design
 
 **Date:** 2026-07-13

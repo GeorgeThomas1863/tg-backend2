@@ -34,6 +34,7 @@ _original_cwd = os.getcwd()
 os.chdir(tempfile.mkdtemp(prefix="tg-backend-tests-"))
 import telegram  # noqa: E402  (must come after the chdir above)
 import main  # noqa: E402
+import prefetch  # noqa: E402
 os.chdir(_original_cwd)
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -49,8 +50,13 @@ def client(monkeypatch):
     async def fake_disconnect():
         return None
 
+    async def fake_prefetch_lifecycle():
+        return None
+
     monkeypatch.setattr(telegram, "connect", fake_connect)
     monkeypatch.setattr(telegram, "disconnect", fake_disconnect)
+    monkeypatch.setattr(prefetch, "start", fake_prefetch_lifecycle)
+    monkeypatch.setattr(prefetch, "stop", fake_prefetch_lifecycle)
     with TestClient(main.app) as test_client:
         yield test_client
 

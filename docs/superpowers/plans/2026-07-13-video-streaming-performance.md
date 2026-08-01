@@ -1,3 +1,5 @@
+> **Superseded:** Readahead (`READAHEAD_BLOCKS`) was replaced by the tiered background worker in `prefetch.py`, and `CACHE_MAX_GB` now defaults to 100. See `2026-08-01-preload-queue-design.md`.
+
 # Video Streaming Performance Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. (subagent-driven-development is disallowed by user config.)

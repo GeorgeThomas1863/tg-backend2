@@ -1,7 +1,7 @@
 """
-stream_range orchestration over fake cache + downloader: byte-exact output
-across hits/misses, single download per block under concurrency, readahead
-scheduling, and fallback to telegram.stream_range when a download fails.
+stream_range orchestration over fake cache + downloader: byte-exact output,
+single download per block under concurrency, playhead notes, and fallback to
+telegram.stream_range when a download fails.
 """
 
 import asyncio
@@ -9,9 +9,10 @@ from types import SimpleNamespace
 
 import cache
 import downloader
+import prefetch
 import streaming
 import telegram
-from config import BLOCK_SIZE, READAHEAD_BLOCKS
+from config import BLOCK_SIZE
 
 FILE_SIZE = 3 * BLOCK_SIZE + 1000
 BUFFER = bytes(range(256)) * (FILE_SIZE // 256 + 1)
@@ -32,7 +33,7 @@ async def test_second_read_serves_from_cache(tmp_path, monkeypatch):
 
 
 async def test_concurrent_same_block_downloads_once(tmp_path, monkeypatch):
-    downloads = install_world(tmp_path, monkeypatch, readahead=0)
+    downloads = install_world(tmp_path, monkeypatch)
     await asyncio.gather(
         drain(streaming.stream_range(make_msg(), 0, 100)),
         drain(streaming.stream_range(make_msg(), 0, 100)),
@@ -40,12 +41,14 @@ async def test_concurrent_same_block_downloads_once(tmp_path, monkeypatch):
     assert downloads.count(0) == 1
 
 
-async def test_readahead_caches_upcoming_blocks(tmp_path, monkeypatch):
+async def test_stream_notes_each_served_block(tmp_path, monkeypatch):
     install_world(tmp_path, monkeypatch)
-    await drain(streaming.stream_range(make_msg(), 0, 100))  # block 0 + readahead
-    await settle_readahead()
-    for idx in range(1, min(READAHEAD_BLOCKS, 3) + 1):
-        assert cache.has_block(1, idx) is True
+    notes = []
+    monkeypatch.setattr(prefetch, "note_playhead", lambda msg_id, idx: notes.append((msg_id, idx)))
+
+    await drain(streaming.stream_range(make_msg(), 100, BLOCK_SIZE + 50))
+
+    assert notes == [(1, 0), (1, 1)]
 
 
 async def test_download_failure_falls_back_to_direct_stream(tmp_path, monkeypatch):
@@ -58,8 +61,19 @@ async def test_download_failure_falls_back_to_direct_stream(tmp_path, monkeypatc
     assert fallback_calls == [(0, 100)]
 
 
+async def test_background_failure_is_logged_and_skipped(tmp_path, monkeypatch, capsys):
+    install_world(tmp_path, monkeypatch, failing=True)
+    msg = SimpleNamespace(id=7, file=SimpleNamespace(size=BLOCK_SIZE), media=object())
+
+    await prefetch.run_worker_download(msg, 0)
+
+    assert (7, 0) in prefetch._failed_keys
+    assert prefetch.select_pin_block(7, 0, BLOCK_SIZE) is None
+    assert "PREFETCH ERROR worker block 7/0" in capsys.readouterr().out
+
+
 async def test_fallback_resumes_at_current_position(tmp_path, monkeypatch):
-    downloads = install_world(tmp_path, monkeypatch, fail_from_block=1, readahead=0)
+    downloads = install_world(tmp_path, monkeypatch, fail_from_block=1)
     fallback_calls = install_fake_direct_stream(monkeypatch)
 
     out = await drain(streaming.stream_range(make_msg(), 100, BLOCK_SIZE + 50))
@@ -78,16 +92,11 @@ async def drain(agen) -> bytes:
     return b"".join(parts)
 
 
-async def settle_readahead():
-    while streaming._readahead_tasks:
-        await asyncio.sleep(0)
-
-
 def make_msg():
     return SimpleNamespace(id=1, file=SimpleNamespace(size=FILE_SIZE), media=object())
 
 
-def install_world(tmp_path, monkeypatch, failing=False, fail_from_block=None, readahead=None):
+def install_world(tmp_path, monkeypatch, failing=False, fail_from_block=None):
     """Point cache at tmp_path, fake downloader.download_block, reset state."""
     downloads = []
 
@@ -104,10 +113,8 @@ def install_world(tmp_path, monkeypatch, failing=False, fail_from_block=None, re
     monkeypatch.setattr(cache, "MAX_BYTES", 10**12)
     monkeypatch.setattr(cache, "_total_bytes", None)
     monkeypatch.setattr(downloader, "download_block", fake_download_block)
-    if readahead is not None:
-        monkeypatch.setattr(streaming, "READAHEAD_BLOCKS", readahead)
-    streaming._block_locks.clear()
-    streaming._inflight.clear()
+    prefetch._block_locks.clear()
+    prefetch._failed_keys.clear()
     return downloads
 
 
