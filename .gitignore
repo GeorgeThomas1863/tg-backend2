@@ -1,0 +1,41 @@
+# Telethon session — grants account access, never commit
+session
+*.session
+*.session-journal
+
+# Python / uv
+__pycache__/
+*.pyc
+.venv/
+
+# Video block + thumbnail cache — bulk data, never commit
+backend/cache/
+
+# Secrets — ignore real .env everywhere, but keep the committed template
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Claude Code — local scratch/screenshots and per-machine settings
+.claude/.tmp/
+.claude/.pics/
+.claude/settings.local.json
+
+# Session history (already self-ignored via .remember/.gitignore; explicit here too)
+.remember/
+.playwright-mcp
