@@ -29,4 +29,55 @@ describe("VideoRow", () => {
     rerender(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
     expect(container.querySelector("video")).toBeNull();
   });
+
+  test("shows no cache progress with default props", () => {
+    const { container, getByText } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    expect(getByText("—").className).toBe("cache-strip-label");
+    expect(container.querySelector(".cache-strip-fill")).toBeNull();
+  });
+
+  test("shows partial cache progress", () => {
+    const { container, getByText } = render(
+      <VideoRow video={video} isExpanded={false} onToggle={vi.fn()} cachedBytes={video.size * 0.42} />,
+    );
+
+    expect(getByText("42%").className).toBe("cache-strip-label");
+    expect(container.querySelector(".cache-strip-fill").style.width).toBe("42%");
+  });
+
+  test("shows active download progress", () => {
+    const { container, getByText } = render(
+      <VideoRow video={video} isExpanded={false} onToggle={vi.fn()} cachedBytes={video.size / 4} isDownloading />,
+    );
+
+    expect(getByText("25% ↓").className).toBe("cache-strip-label");
+    expect(container.querySelector(".cache-strip-fill").classList.contains("downloading")).toBe(true);
+  });
+
+  test("shows paused download progress without the downloading class", () => {
+    const { container, getByText } = render(
+      <VideoRow
+        video={video}
+        isExpanded={false}
+        onToggle={vi.fn()}
+        cachedBytes={video.size / 2}
+        isDownloading
+        paused
+      />,
+    );
+
+    expect(getByText("50% paused").className).toBe("cache-strip-label");
+    expect(container.querySelector(".cache-strip-fill").classList.contains("downloading")).toBe(false);
+  });
+
+  test("shows fully cached progress without the downloading class", () => {
+    const { container, getByText } = render(
+      <VideoRow video={video} isExpanded={false} onToggle={vi.fn()} cachedBytes={video.size} isDownloading />,
+    );
+
+    expect(getByText("cached").className).toBe("cache-strip-label");
+    expect(container.querySelector(".cache-strip-fill").style.width).toBe("100%");
+    expect(container.querySelector(".cache-strip-fill").classList.contains("downloading")).toBe(false);
+  });
 });

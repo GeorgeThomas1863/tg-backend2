@@ -1,5 +1,12 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchVideos, postLogin, streamUrl, thumbUrl } from "./client";
+import {
+  fetchCacheStatus,
+  fetchVideos,
+  postCachePaused,
+  postLogin,
+  streamUrl,
+  thumbUrl,
+} from "./client";
 
 // VITE_API_BASE is pinned to "http://test-api" in vitest.config.js (test.env),
 // so these assertions never depend on the machine's repo-root .env.
@@ -57,6 +64,34 @@ describe("fetchVideos", () => {
   });
 });
 
+describe("fetchCacheStatus", () => {
+  test("requests cache status with credentials and returns parsed JSON", async () => {
+    const status = {
+      total_bytes: 128,
+      max_bytes: 1024,
+      paused: false,
+      active: null,
+      videos: { "7": 128 },
+    };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => status });
+
+    await expect(fetchCacheStatus()).resolves.toEqual(status);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/cache/status`, {
+      credentials: "include",
+    });
+  });
+
+  test("throws an Error carrying .status when the response is not ok", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503 });
+
+    const error = await fetchCacheStatus().catch((e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.status).toBe(503);
+    expect(error.message).toBe("HTTP 503");
+  });
+});
+
 describe("postLogin", () => {
   test("returns {success:false} WITHOUT calling fetch when pw is empty", async () => {
     const result = await postLogin("");
@@ -89,6 +124,44 @@ describe("postLogin", () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
 
     await expect(postLogin("hunter2")).resolves.toEqual({ success: false, message: "Failed to fetch" });
+  });
+});
+
+describe("postCachePaused", () => {
+  test("posts the paused state with credentials and returns parsed JSON", async () => {
+    const response = { success: true, message: "Cache paused" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(postCachePaused(true)).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/cache/paused`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ paused: true }),
+    });
+  });
+
+  test("returns the server message on a non-ok response", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ message: "Cache state conflict" }),
+    });
+
+    await expect(postCachePaused(false)).resolves.toEqual({
+      success: false,
+      message: "Cache state conflict",
+    });
+  });
+
+  test("returns a failure result instead of throwing on a network error", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(postCachePaused(true)).resolves.toEqual({
+      success: false,
+      message: "Failed to fetch",
+    });
   });
 });
 

@@ -180,6 +180,77 @@ async def test_disabled_prewarm_still_runs_pin_tier(tmp_path, monkeypatch):
     assert world["calls"] == [(1, 0)]
 
 
+async def test_paused_worker_selects_no_job(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch, [make_msg(1)])
+    monkeypatch.setattr(config, "PREWARM_ENABLED", True)
+    prefetch.note_playhead(1, 0)
+    prefetch.set_paused(True)
+
+    assert await prefetch.select_worker_job() is None
+
+
+async def test_pausing_cancels_inflight_worker_download(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch, [])
+    download = asyncio.create_task(asyncio.Event().wait())
+    prefetch._worker_download_task = download
+
+    prefetch.set_paused(True)
+    await yield_many()
+
+    assert download.cancelled()
+
+
+async def test_resuming_wakes_parked_worker(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch, [])
+    prefetch.set_paused(True)
+
+    prefetch.set_paused(False)
+
+    assert prefetch._work_available.is_set()
+
+
+async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch, [])
+    pin_job = (make_msg(1), 0)
+    prewarm_job = (make_msg(2), 0)
+
+    async def select_pin():
+        return pin_job
+
+    async def select_no_pin():
+        return None
+
+    async def select_prewarm():
+        return prewarm_job
+
+    assert prefetch.status() == {"paused": False, "active": None}
+
+    monkeypatch.setattr(prefetch, "select_pin_job", select_pin)
+    assert await prefetch.select_worker_job() == pin_job
+    prefetch._worker_download_key = (1, 0)
+    assert prefetch.status() == {
+        "paused": False,
+        "active": {"msg_id": 1, "tier": "pin"},
+    }
+
+    prefetch._worker_download_key = None
+    monkeypatch.setattr(prefetch, "select_pin_job", select_no_pin)
+    monkeypatch.setattr(prefetch, "select_prewarm_job", select_prewarm)
+    monkeypatch.setattr(config, "PREWARM_ENABLED", True)
+    assert await prefetch.select_worker_job() == prewarm_job
+    prefetch._worker_download_key = (2, 0)
+    assert prefetch.status() == {
+        "paused": False,
+        "active": {"msg_id": 2, "tier": "prewarm"},
+    }
+
+    prefetch.set_paused(True)
+    assert prefetch.status() == {
+        "paused": True,
+        "active": {"msg_id": 2, "tier": "prewarm"},
+    }
+
+
 # --- helpers ---
 
 
@@ -223,7 +294,7 @@ def install_world(tmp_path, monkeypatch, messages, outcomes=None):
     monkeypatch.setattr(downloader, "download_block", fake_download_block)
     monkeypatch.setattr(telegram, "get_message", fake_get_message)
     monkeypatch.setattr(telegram, "list_videos", fake_list_videos)
-    reset_prefetch_state()
+    reset_prefetch_state(monkeypatch)
     return {
         "calls": calls,
         "cancelled": cancelled,
@@ -232,7 +303,7 @@ def install_world(tmp_path, monkeypatch, messages, outcomes=None):
     }
 
 
-def reset_prefetch_state():
+def reset_prefetch_state(monkeypatch):
     prefetch._block_locks.clear()
     prefetch._urgent_keys.clear()
     prefetch._urgent_empty = asyncio.Event()
@@ -242,6 +313,8 @@ def reset_prefetch_state():
     prefetch._worker_task = None
     prefetch._worker_download_task = None
     prefetch._worker_download_key = None
+    monkeypatch.setattr(prefetch, "_paused", False)
+    monkeypatch.setattr(prefetch, "_active_tier", None)
     prefetch._failed_keys.clear()
     prefetch._logged_oversized_pins.clear()
     prefetch.reset_prewarm_pass()

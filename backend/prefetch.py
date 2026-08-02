@@ -24,6 +24,8 @@ _pin: tuple[int, int] | None = None
 _worker_task = None
 _worker_download_task = None
 _worker_download_key = None
+_paused: bool = False
+_active_tier: str | None = None
 _failed_keys: set[tuple[int, int]] = set()
 _logged_oversized_pins: set[int] = set()
 
@@ -72,6 +74,27 @@ async def stop() -> None:
         except Exception:
             report_error("stopping worker download")
     _worker_download_task = None
+
+
+def set_paused(paused: bool) -> None:
+    """Pause or resume background preload work."""
+    global _paused
+    _paused = paused
+    if paused:
+        if _worker_download_task and not _worker_download_task.done():
+            _worker_download_task.cancel()
+        return
+    _work_available.set()
+
+
+def status() -> dict:
+    """Report background preload state."""
+    if _worker_download_key is None:
+        return {"paused": _paused, "active": None}
+    return {
+        "paused": _paused,
+        "active": {"msg_id": _worker_download_key[0], "tier": _active_tier},
+    }
 
 
 def note_playhead(msg_id: int, block_idx: int) -> None:
@@ -162,7 +185,7 @@ async def run_worker() -> None:
 
 
 async def run_worker_download(msg, idx: int) -> None:
-    global _worker_download_task, _worker_download_key
+    global _worker_download_task, _worker_download_key, _active_tier
     if not _urgent_empty.is_set():
         return
     # No await before task + key publication: check-then-publish stays atomic.
@@ -181,15 +204,23 @@ async def run_worker_download(msg, idx: int) -> None:
     finally:
         _worker_download_task = None
         _worker_download_key = None
+        _active_tier = None
 
 
 async def select_worker_job():
+    if _paused:
+        return None
+    global _active_tier
     pin_job = await select_pin_job()
     if pin_job is not None:
+        _active_tier = "pin"
         return pin_job
     if not config.PREWARM_ENABLED:
         return None
-    return await select_prewarm_job()
+    prewarm_job = await select_prewarm_job()
+    if prewarm_job is not None:
+        _active_tier = "prewarm"
+    return prewarm_job
 
 
 async def select_pin_job():

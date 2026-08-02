@@ -65,6 +65,10 @@ class AuthBody(BaseModel):
     pw: str
 
 
+class CachePausedBody(BaseModel):
+    paused: bool
+
+
 def check_password(pw: str) -> bool:
     """Compare a submitted password against the bcrypt hash from config."""
     try:
@@ -101,6 +105,35 @@ async def login(body: AuthBody, request: Request):
     auth_limiter.clear(client_ip)
     request.session["authenticated"] = True
     return {"success": True, "message": "Authenticated"}
+
+
+# --- cache ---
+
+
+@app.get("/api/cache/status", dependencies=[Depends(require_auth)])
+async def cache_status():
+    worker = prefetch.status()
+    try:
+        total_bytes = cache.current_total()
+    except Exception:
+        cache.report_error("reading total for cache status")
+        total_bytes = 0
+    return {
+        "total_bytes": total_bytes,
+        "max_bytes": cache.MAX_BYTES,
+        "paused": worker["paused"],
+        "active": worker["active"],
+        "videos": cache.video_totals(),
+    }
+
+
+@app.post("/api/cache/paused", dependencies=[Depends(require_auth)])
+async def set_cache_paused(body: CachePausedBody):
+    prefetch.set_paused(body.paused)
+    return {
+        "success": True,
+        "message": "Caching paused" if body.paused else "Caching resumed",
+    }
 
 
 # --- videos ---

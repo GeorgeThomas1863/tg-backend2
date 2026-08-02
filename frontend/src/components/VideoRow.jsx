@@ -5,8 +5,18 @@ import { formatDate, formatDuration, formatSize } from "../format";
 // One ledger row: a clickable header line (thumb, title, mono metadata
 // columns, chevron) that expands into a player panel below it. The <video>
 // only mounts while the row is expanded, so exactly one stream is ever open.
-export function VideoRow({ video, isExpanded, onToggle }) {
+export function VideoRow({
+  video,
+  isExpanded,
+  onToggle,
+  cachedBytes = 0,
+  isDownloading = false,
+  paused = false,
+}) {
   const chevronClass = isExpanded ? "row-chevron expanded" : "row-chevron";
+  const pct = video.size > 0 ? Math.min(100, Math.round((cachedBytes / video.size) * 100)) : 0;
+  const fillClass = isDownloading && !paused && pct < 100 ? "cache-strip-fill downloading" : "cache-strip-fill";
+  const label = buildCacheLabel(pct, isDownloading, paused);
 
   return (
     <div className="video-row">
@@ -20,6 +30,12 @@ export function VideoRow({ video, isExpanded, onToggle }) {
           ▸
         </span>
       </button>
+      <div className="cache-strip">
+        <div className="cache-strip-track">
+          {pct > 0 && <div className={fillClass} style={{ width: `${pct}%` }} />}
+        </div>
+        <span className="cache-strip-label">{label}</span>
+      </div>
       {isExpanded && (
         <div className="row-panel">
           <VideoPlayer video={video} />
@@ -27,4 +43,14 @@ export function VideoRow({ video, isExpanded, onToggle }) {
       )}
     </div>
   );
+}
+
+//---
+
+function buildCacheLabel(pct, isDownloading, paused) {
+  if (pct >= 100) return "cached";
+  if (isDownloading && paused) return `${pct}% paused`;
+  if (isDownloading) return `${pct}% ↓`;
+  if (pct === 0) return "—";
+  return `${pct}%`;
 }

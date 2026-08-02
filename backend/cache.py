@@ -19,6 +19,7 @@ CACHE_ROOT = Path(CACHE_DIR)
 MAX_BYTES = int(CACHE_MAX_GB * 1024**3)
 
 _total_bytes = None  # lazily initialised; rebuilt by scan after restart
+_video_bytes: dict[int, int] | None = None
 
 
 # --- blocks ---
@@ -48,7 +49,7 @@ def write_block(msg_id: int, block_idx: int, data: bytes) -> None:
     except OSError:
         report_error(f"writing block {msg_id}/{block_idx}")
         return
-    grow_total(len(data))
+    grow_accounting(msg_id, len(data))
     evict_until_under_cap()
 
 
@@ -83,7 +84,7 @@ def write_thumb(msg_id: int, data: bytes) -> None:
 
 
 def evict_until_under_cap() -> None:
-    global _total_bytes
+    global _total_bytes, _video_bytes
     if current_total() <= MAX_BYTES:
         return
     for path, size in list_blocks_oldest_first():
@@ -92,14 +93,21 @@ def evict_until_under_cap() -> None:
         try:
             path.unlink()
             _total_bytes -= size
+            try:
+                msg_id = int(path.parent.name)
+            except ValueError:
+                continue
+            remaining = _video_bytes.get(msg_id, 0) - size
+            if remaining <= 0:
+                _video_bytes.pop(msg_id, None)
+            else:
+                _video_bytes[msg_id] = remaining
         except OSError:
             report_error(f"evicting {path}")
 
 
 def current_total() -> int:
-    global _total_bytes
-    if _total_bytes is None:
-        _total_bytes = scan_total()
+    initialise_accounting()
     return _total_bytes
 
 
@@ -108,16 +116,51 @@ def grow_total(added: int) -> None:
     if _total_bytes is None:
         # First touch: the scan already sees the file just written —
         # adding `added` on top would double-count it.
-        _total_bytes = scan_total()
+        initialise_accounting()
         return
     _total_bytes += added
 
 
+def grow_accounting(msg_id: int, added: int) -> None:
+    global _total_bytes, _video_bytes
+    if _total_bytes is None or _video_bytes is None:
+        initialise_accounting()
+        return
+    _total_bytes += added
+    _video_bytes[msg_id] = _video_bytes.get(msg_id, 0) + added
+
+
+def video_totals() -> dict[int, int]:
+    try:
+        initialise_accounting()
+        return _video_bytes.copy()
+    except Exception:
+        return {}
+
+
+def initialise_accounting() -> None:
+    global _total_bytes, _video_bytes
+    if _total_bytes is not None and _video_bytes is not None:
+        return
+    _total_bytes, _video_bytes = scan_accounting()
+
+
 def scan_total() -> int:
-    total = 0
-    for _, size in iter_block_files():
-        total += size
+    total, _ = scan_accounting()
     return total
+
+
+def scan_accounting() -> tuple[int, dict[int, int]]:
+    total = 0
+    videos = {}
+    for path, size in iter_block_files():
+        total += size
+        try:
+            msg_id = int(path.parent.name)
+        except ValueError:
+            continue
+        videos[msg_id] = videos.get(msg_id, 0) + size
+    return total, videos
 
 
 def list_blocks_oldest_first() -> list:

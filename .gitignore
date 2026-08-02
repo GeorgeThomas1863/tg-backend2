@@ -11,6 +11,8 @@ __pycache__/
 # Video block + thumbnail cache — bulk data, never commit
 backend/cache/
 
+docs/
+
 # Secrets — ignore every .env variant, but keep the committed template
 .env*
 
