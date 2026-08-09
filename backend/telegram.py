@@ -13,12 +13,14 @@ from typing import AsyncGenerator, Optional
 from telethon import TelegramClient
 from telethon.tl.types import InputMessagesFilterVideo
 
-from config import API_ID, API_HASH, CHANNEL, ALIGN, MSG_CACHE_TTL, REQUEST_SIZE
+import channels
+import config
+from config import API_ID, API_HASH, ALIGN, MSG_CACHE_TTL, REQUEST_SIZE
 
 # Single shared client. One session, one event loop — fine for 1-2 users.
 client = TelegramClient("session", API_ID, API_HASH)
 
-_msg_cache: dict[int, tuple[object, float]] = {}
+_msg_cache: dict[tuple[str, int], tuple[object, float]] = {}
 
 
 async def connect() -> None:
@@ -46,55 +48,70 @@ def media_to_dict(msg) -> dict:
 
 
 async def list_videos(limit: int = 50, before_id: int | None = None) -> Optional[list[dict]]:
+    channel = channels.get_active()
+    if channel is None:
+        return []
     try:
         msgs = await client.get_messages(
-            CHANNEL, limit=limit, offset_id=before_id or 0,
+            channel, limit=limit, offset_id=before_id or 0,
             filter=InputMessagesFilterVideo,
         )
     except Exception:
-        report_error(f"listing videos from {CHANNEL!r}")
+        report_error(f"listing videos from {channel!r}")
         return None
     return [media_to_dict(m) for m in msgs if m.file]
 
 
-async def get_message(msg_id: int):
+async def get_message(msg_id: int, channel_key: str | None = None):
     """Resolve a message, serving repeats from a short TTL cache."""
-    cached = read_cached_message(msg_id)
+    channel_key = channel_key or channels.active_key()
+    if channel_key is None:
+        return None
+    channel = config.parse_channel(channel_key)
+    cached = read_cached_message(channel_key, msg_id)
     if cached is not None:
         return cached
 
     try:
-        msg = await client.get_messages(CHANNEL, ids=msg_id)
+        msg = await client.get_messages(channel, ids=msg_id)
     except Exception:
-        report_error(f"fetching message {msg_id} from {CHANNEL!r}")
+        report_error(f"fetching message {msg_id} from {channel!r}")
         return None
 
     if msg:
-        store_cached_message(msg_id, msg)
+        store_cached_message(channel_key, msg_id, msg)
     return msg
 
 
-def read_cached_message(msg_id: int):
-    entry = _msg_cache.get(msg_id)
+def read_cached_message(channel_key: str, msg_id: int):
+    cache_key = (channel_key, msg_id)
+    entry = _msg_cache.get(cache_key)
     if not entry:
         return None
     msg, fetched_at = entry
     if time.monotonic() - fetched_at > MSG_CACHE_TTL:
-        del _msg_cache[msg_id]
+        del _msg_cache[cache_key]
         return None
     return msg
 
 
-def store_cached_message(msg_id: int, msg) -> None:
+def store_cached_message(channel_key: str, msg_id: int, msg) -> None:
     # Blunt size bound: reset rather than track LRU — refill is one RTT.
     if len(_msg_cache) > 1024:
         _msg_cache.clear()
-    _msg_cache[msg_id] = (msg, time.monotonic())
+    _msg_cache[(channel_key, msg_id)] = (msg, time.monotonic())
 
 
 def invalidate_message(msg_id: int) -> None:
     """Drop a cached message (stale file_reference)."""
-    _msg_cache.pop(msg_id, None)
+    for cache_key in list(_msg_cache):
+        if cache_key[1] == msg_id:
+            _msg_cache.pop(cache_key, None)
+
+
+def clear_messages() -> None:
+    """Drop every channel-specific cached Telegram message."""
+    _msg_cache.clear()
 
 
 async def get_thumbnail(msg) -> Optional[bytes]:

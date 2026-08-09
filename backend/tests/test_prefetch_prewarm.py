@@ -17,10 +17,10 @@ async def test_prewarm_enumerates_newest_first_and_skips_cached_blocks(
     sizes[100] = 2
     sizes[99] = 3
     calls = install_fakes(monkeypatch, tmp_path, [first_page, last_page], sizes)
-    cache.write_block(100, 0, b"x")
-    cache.write_block(100, 1, b"x")
-    cache.write_block(99, 0, b"x")
-    cache.write_block(99, 2, b"x")
+    cache.write_block("test", 100, 0, b"x")
+    cache.write_block("test", 100, 1, b"x")
+    cache.write_block("test", 99, 0, b"x")
+    cache.write_block("test", 99, 2, b"x")
 
     await run_one_pass()
 
@@ -120,7 +120,7 @@ async def test_disabled_prewarm_never_downloads_library_but_pin_still_downloads(
         monkeypatch, tmp_path, [[make_video(9)]], {7: 2, 9: 1}
     )
     monkeypatch.setattr(prefetch.config, "PREWARM_ENABLED", False)
-    prefetch.note_playhead(7, 0)
+    prefetch.note_playhead("test", 7, 0)
 
     while True:
         job = await prefetch.select_worker_job()

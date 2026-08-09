@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CacheDrawer } from "./CacheDrawer";
 
 const videos = [
@@ -17,6 +17,8 @@ function buildStatus(overrides = {}) {
     paused: false,
     active: null,
     videos: {},
+    cache_dir: "C:\\cache",
+    max_gb: 20,
     ...overrides,
   };
 }
@@ -87,5 +89,142 @@ describe("CacheDrawer", () => {
 
     fireEvent.click(container.querySelector(".cache-drawer-close"));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  test("renders settings inputs prefilled from status", () => {
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={vi.fn()} />);
+
+    expect(screen.getByLabelText("Max size (GB)")).toHaveValue(20);
+    expect(screen.getByLabelText("Cache folder")).toHaveValue("C:\\cache");
+  });
+
+  test("saves a valid max size without confirmation", async () => {
+    const onSaveSettings = vi.fn().mockResolvedValue({ success: true });
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
+
+    fireEvent.change(screen.getByLabelText("Max size (GB)"), { target: { value: "32" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    await waitFor(() => expect(onSaveSettings).toHaveBeenCalledWith({ cache_max_gb: 32 }));
+    expect(screen.queryByText(/wipes the current cache/i)).not.toBeInTheDocument();
+  });
+
+  test.each(["0", "garbage", "1e309"])("rejects invalid max size %s", async (value) => {
+    const onSaveSettings = vi.fn();
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
+
+    fireEvent.change(screen.getByLabelText("Max size (GB)"), { target: { value } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("greater than 0");
+    expect(onSaveSettings).not.toHaveBeenCalled();
+  });
+
+  test("disables both settings rows while a save is pending", async () => {
+    let resolveSave;
+    const onSaveSettings = vi.fn(() => new Promise((resolve) => {
+      resolveSave = resolve;
+    }));
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
+
+    const inputs = [screen.getByLabelText("Max size (GB)"), screen.getByLabelText("Cache folder")];
+    const saveButtons = screen.getAllByRole("button", { name: "Save" });
+    fireEvent.click(saveButtons[1]);
+    const confirmationButtons = [screen.getByRole("button", { name: "Continue" }), screen.getByRole("button", { name: "Cancel" })];
+    fireEvent.click(saveButtons[0]);
+
+    await waitFor(() => {
+      for (const control of [...inputs, ...saveButtons, ...confirmationButtons]) expect(control).toBeDisabled();
+    });
+
+    resolveSave({ success: true });
+    await waitFor(() => {
+      for (const control of [...inputs, ...saveButtons, ...confirmationButtons]) expect(control).toBeEnabled();
+    });
+  });
+
+  test("confirms a trimmed folder change and supports cancellation", async () => {
+    const onSaveSettings = vi.fn().mockResolvedValue({ success: true });
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
+
+    fireEvent.change(screen.getByLabelText("Cache folder"), { target: { value: "  D:\\video-cache  " } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[1]);
+    expect(screen.getByText(/wipes the current cache/i)).toBeInTheDocument();
+    expect(onSaveSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/wipes the current cache/i)).not.toBeInTheDocument();
+    expect(onSaveSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(onSaveSettings).toHaveBeenCalledWith({ cache_dir: "D:\\video-cache" }));
+  });
+
+  test("renders a failed save message inline", async () => {
+    const onSaveSettings = vi.fn().mockResolvedValue({ success: false, message: "Folder is unavailable" });
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Folder is unavailable");
+  });
+
+  test("shows a confirmation before clearing the cache", () => {
+    const onClearCache = vi.fn();
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={vi.fn()} onClearCache={onClearCache} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear cache" }));
+
+    expect(screen.getByText("Delete all cached data? Videos will re-download as needed.")).toBeInTheDocument();
+    expect(onClearCache).not.toHaveBeenCalled();
+  });
+
+  test("continues or cancels a clear confirmation", async () => {
+    const onClearCache = vi.fn().mockResolvedValue({ success: true });
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={vi.fn()} onClearCache={onClearCache} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear cache" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/Delete all cached data/)).not.toBeInTheDocument();
+    expect(onClearCache).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear cache" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(onClearCache).toHaveBeenCalledOnce());
+  });
+
+  test("locks all settings controls while clearing", async () => {
+    let resolveClear;
+    const onClearCache = vi.fn(() => new Promise((resolve) => { resolveClear = resolve; }));
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={vi.fn()} onClearCache={onClearCache} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Clear cache" }));
+    const clearConfirm = screen.getAllByRole("button", { name: "Continue" })[1];
+    fireEvent.click(clearConfirm);
+
+    const controls = [
+      screen.getByLabelText("Max size (GB)"),
+      screen.getByLabelText("Cache folder"),
+      ...screen.getAllByRole("button", { name: "Save" }),
+      screen.getByRole("button", { name: "Clear cache" }),
+      ...screen.getAllByRole("button", { name: "Continue" }),
+      ...screen.getAllByRole("button", { name: "Cancel" }),
+    ];
+    await waitFor(() => { for (const control of controls) expect(control).toBeDisabled(); });
+
+    resolveClear({ success: true });
+    await waitFor(() => { for (const control of controls) expect(control).toBeEnabled(); });
+  });
+
+  test("renders a failed clear message inline", async () => {
+    const onClearCache = vi.fn().mockResolvedValue({ success: false, message: "Cache is busy" });
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={vi.fn()} onClearCache={onClearCache} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear cache" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cache is busy");
   });
 });

@@ -42,6 +42,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "itsdangerous" },
     { name = "python-dotenv" },
+    { name = "pymongo" },
     { name = "telethon" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -60,6 +61,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.138.0" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pymongo", specifier = ">=4.15.0" },
     { name = "telethon", specifier = ">=1.44.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.49.0" },
 ]
@@ -193,6 +195,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/f1/fcc52170486f35698229b573c0b6bc844f0504745f43fc47fde0cb61888e/cryptg-0.6.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:ae96b26dfb53968fe4986f70222f2419c82651936f2ef3b2c2dc47bc74e77d96", size = 250297, upload-time = "2026-04-12T18:35:40.577Z" },
     { url = "https://files.pythonhosted.org/packages/c3/d5/5041385f3a55d6eaa8f86c79e9fbb799d09680977619d506e35c09a9a3f9/cryptg-0.6.0-cp314-cp314t-win32.whl", hash = "sha256:e4988fd1657aa86d91bc98d8262b78b141dec8ef51a843f1ef78d69e8a81fdf0", size = 111989, upload-time = "2026-04-12T18:36:05.193Z" },
     { url = "https://files.pythonhosted.org/packages/88/08/86db1d558e836c75724ef893c024d3f087886d1f8b173f2f64164505e256/cryptg-0.6.0-cp314-cp314t-win_amd64.whl", hash = "sha256:43f195810c642c6f6c552d291a216a5b5cb36b06aabe2832873db9dde3e65bb1", size = 111602, upload-time = "2026-04-12T18:36:06.81Z" },
+]
+
+[[package]]
+name = "dnspython"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/source/d/dnspython/dnspython-2.8.0.tar.gz" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/5a/18ad964b0086c6e62e2e7500f7edc89e3faa45033c71c1893d34eed2b2de/dnspython-2.8.0-py3-none-any.whl" },
 ]
 
 [[package]]
@@ -444,6 +455,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/43/7c/d36d04db312ecf429
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/e2/08a497ef684b88559c9cc5f4ad53a37e7b99e727094a86d6ea32536d5d3c/pytest_asyncio-1.4.0-py3-none-any.whl", hash = "sha256:933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1", size = 16930, upload-time = "2026-05-26T09:56:02.576Z" },
 ]
+
+[[package]]
+name = "pymongo"
+version = "4.15.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dnspython" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/source/p/pymongo/pymongo-4.15.3.tar.gz" }
 
 [[package]]
 name = "python-dotenv"

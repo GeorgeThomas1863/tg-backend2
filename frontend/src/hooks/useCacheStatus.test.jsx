@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { fetchCacheStatus, postCachePaused } from "../api/client";
+import { fetchCacheStatus, postCacheClear, postCachePaused, postCacheSettings } from "../api/client";
 import { useCacheStatus } from "./useCacheStatus";
 
-vi.mock("../api/client", () => ({ fetchCacheStatus: vi.fn(), postCachePaused: vi.fn() }));
+vi.mock("../api/client", () => ({ fetchCacheStatus: vi.fn(), postCacheClear: vi.fn(), postCachePaused: vi.fn(), postCacheSettings: vi.fn() }));
 
 function buildStatus(totalBytes, paused = false) {
   return {
@@ -12,6 +12,8 @@ function buildStatus(totalBytes, paused = false) {
     paused,
     active: null,
     videos: {},
+    cache_dir: "C:\\cache",
+    max_gb: 20,
   };
 }
 
@@ -25,6 +27,8 @@ beforeEach(() => {
   vi.useRealTimers();
   fetchCacheStatus.mockReset();
   postCachePaused.mockReset();
+  postCacheClear.mockReset();
+  postCacheSettings.mockReset();
 });
 
 describe("useCacheStatus", () => {
@@ -121,5 +125,72 @@ describe("useCacheStatus", () => {
     expect(postCachePaused).toHaveBeenCalledWith(true);
     expect(fetchCacheStatus).toHaveBeenCalledTimes(2);
     expect(result.current.status).toEqual(refreshedStatus);
+  });
+
+  test("saves settings and refetches status after success", async () => {
+    const initialStatus = buildStatus(100);
+    const refreshedStatus = { ...buildStatus(100), max_gb: 40 };
+    const fields = { cache_max_gb: 40 };
+    fetchCacheStatus.mockResolvedValueOnce(initialStatus).mockResolvedValueOnce(refreshedStatus);
+    postCacheSettings.mockResolvedValue({ success: true, message: "Saved" });
+
+    const { result } = renderHook(() => useCacheStatus(true));
+    await waitFor(() => expect(result.current.status).toEqual(initialStatus));
+
+    let saveResult;
+    await act(async () => { saveResult = await result.current.saveSettings(fields); });
+
+    expect(postCacheSettings).toHaveBeenCalledWith(fields);
+    expect(fetchCacheStatus).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toEqual(refreshedStatus);
+    expect(saveResult).toEqual({ success: true, message: "Saved" });
+  });
+
+  test("returns a failed settings result without refetching", async () => {
+    const failedResult = { success: false, message: "Invalid folder" };
+    fetchCacheStatus.mockResolvedValueOnce(buildStatus(100));
+    postCacheSettings.mockResolvedValue(failedResult);
+
+    const { result } = renderHook(() => useCacheStatus(true));
+    await waitFor(() => expect(result.current.status).not.toBeNull());
+
+    let saveResult;
+    await act(async () => { saveResult = await result.current.saveSettings({ cache_dir: "D:\\cache" }); });
+
+    expect(saveResult).toEqual(failedResult);
+    expect(fetchCacheStatus).toHaveBeenCalledTimes(1);
+  });
+
+  test("clears the cache and refetches status after success", async () => {
+    const initialStatus = buildStatus(100);
+    const refreshedStatus = buildStatus(0);
+    fetchCacheStatus.mockResolvedValueOnce(initialStatus).mockResolvedValueOnce(refreshedStatus);
+    postCacheClear.mockResolvedValue({ success: true, message: "Cleared" });
+
+    const { result } = renderHook(() => useCacheStatus(true));
+    await waitFor(() => expect(result.current.status).toEqual(initialStatus));
+
+    let clearResult;
+    await act(async () => { clearResult = await result.current.clearCache(); });
+
+    expect(postCacheClear).toHaveBeenCalledOnce();
+    expect(fetchCacheStatus).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toEqual(refreshedStatus);
+    expect(clearResult).toEqual({ success: true, message: "Cleared" });
+  });
+
+  test("returns a failed clear result without refetching", async () => {
+    const failedResult = { success: false, message: "Clear failed" };
+    fetchCacheStatus.mockResolvedValueOnce(buildStatus(100));
+    postCacheClear.mockResolvedValue(failedResult);
+
+    const { result } = renderHook(() => useCacheStatus(true));
+    await waitFor(() => expect(result.current.status).not.toBeNull());
+
+    let clearResult;
+    await act(async () => { clearResult = await result.current.clearCache(); });
+
+    expect(clearResult).toEqual(failedResult);
+    expect(fetchCacheStatus).toHaveBeenCalledTimes(1);
   });
 });

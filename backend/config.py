@@ -8,6 +8,15 @@ from dotenv import load_dotenv
 # Repo-root .env, shared with the frontend. Already-set env vars win.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+
+def require_env(name: str) -> str:
+    """Return a required setting or fail with a startup-friendly message."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    raise RuntimeError(f"Missing required environment variable: {name}")
+
+
 def parse_channel(raw: str) -> int | str:
     """Telethon needs numeric channel IDs as int; usernames stay strings."""
     stripped = raw.strip()
@@ -19,7 +28,12 @@ def parse_channel(raw: str) -> int | str:
 # From https://my.telegram.org -> "API development tools"
 API_ID = int(os.environ["TELEGRAM_API_ID"])
 API_HASH = os.environ["TELEGRAM_API_HASH"]
-CHANNEL = parse_channel(os.environ["TELEGRAM_CHANNEL"])  # "mychannel" or -1001234567890
+TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL")
+CHANNEL = parse_channel(TELEGRAM_CHANNEL) if TELEGRAM_CHANNEL else None
+
+# MongoDB is core storage, so missing settings fail immediately at import.
+MONGO_URI = require_env("MONGO_URI")
+DB_NAME = require_env("DB_NAME")
 
 # Site auth. PW_HASH is a bcrypt hash of the site password (single-quote it in
 # .env — the $ signs must stay literal). SESSION_SECRET signs the session

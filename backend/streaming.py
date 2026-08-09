@@ -13,16 +13,16 @@ import telegram
 from config import BLOCK_SIZE
 
 
-async def stream_range(msg, start: int, end: int) -> AsyncGenerator[bytes, None]:
+async def stream_range(channel_key: str, msg, start: int, end: int) -> AsyncGenerator[bytes, None]:
     """Yield bytes [start, end] inclusive: cache-first, else download+cache."""
     position = start
     for plan in plan_blocks(start, end, msg.file.size):
-        data = await prefetch.get_block(msg, plan.idx, urgent=True)
+        data = await prefetch.get_block(channel_key, msg, plan.idx, urgent=True)
         if data is None:
             async for chunk in telegram.stream_range(msg, position, end):
                 yield chunk
             return
-        prefetch.note_playhead(msg.id, plan.idx)
+        prefetch.note_playhead(channel_key, msg.id, plan.idx)
         piece = data[plan.start:plan.end]
         position += len(piece)
         yield piece

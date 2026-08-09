@@ -7,11 +7,150 @@ and resolves telegram.xxx at call time.
 from types import SimpleNamespace
 
 import cache
+import channels
+import main
+import prefetch
+import pytest
 import streaming
 import telegram
 
 FILE_SIZE = 100
 DATA = bytes(range(FILE_SIZE))
+
+
+# --- /api/channels ---
+
+
+def test_channels_list_endpoint(authed_client, monkeypatch):
+    entries = [{"id": "one", "channel": "example"}]
+
+    async def fake_list_channels():
+        return entries
+
+    monkeypatch.setattr(channels, "list_channels", fake_list_channels)
+
+    response = authed_client.get("/api/channels")
+
+    assert response.status_code == 200
+    assert response.json() == {"channels": entries}
+
+
+def test_add_channel_endpoint_trims_input(authed_client, monkeypatch):
+    seen = []
+
+    async def fake_add_channel(raw):
+        seen.append(raw)
+        return {"success": True, "message": "Channel added"}
+
+    monkeypatch.setattr(channels, "add_channel", fake_add_channel)
+
+    response = authed_client.post("/api/channels", json={"channel": " example "})
+
+    assert response.json()["success"] is True
+    assert seen == ["example"]
+
+
+def test_set_default_channel_endpoint(authed_client, monkeypatch):
+    async def fake_set_default(channel_id):
+        return {"success": True, "message": channel_id}
+
+    monkeypatch.setattr(channels, "set_default", fake_set_default)
+
+    response = authed_client.post("/api/channels/default", json={"id": "two"})
+
+    assert response.json() == {"success": True, "message": "two"}
+
+
+def test_delete_channel_endpoint_preserves_registry_guards(authed_client, monkeypatch):
+    async def fake_remove_channel(channel_id):
+        return {
+            "success": False,
+            "message": f"The {channel_id} channel cannot be removed",
+        }
+
+    monkeypatch.setattr(channels, "remove_channel", fake_remove_channel)
+
+    active = authed_client.delete("/api/channels/active")
+    default = authed_client.delete("/api/channels/default")
+
+    assert active.json()["success"] is False
+    assert "active" in active.json()["message"]
+    assert default.json()["success"] is False
+    assert "default" in default.json()["message"]
+
+
+def test_activate_channel_runs_switch_steps_in_order(authed_client, monkeypatch):
+    steps = []
+
+    async def fake_stop():
+        steps.append("stop")
+
+    async def fake_set_active(channel_id):
+        steps.append(f"activate:{channel_id}")
+        return {"success": True, "message": "Active channel updated"}
+
+    async def fake_wipe(channel_key):
+        steps.append(f"wipe:{channel_key}")
+
+    async def fake_start():
+        steps.append("start")
+
+    monkeypatch.setattr(prefetch, "stop", fake_stop)
+    monkeypatch.setattr(telegram, "clear_messages", lambda: steps.append("clear"))
+    monkeypatch.setattr(channels, "active_key", lambda: "old")
+    monkeypatch.setattr(channels, "set_active", fake_set_active)
+    monkeypatch.setattr(cache, "reset_accounting", lambda: steps.append("reset"))
+    monkeypatch.setattr(main, "wipe_channel_cache", fake_wipe)
+    monkeypatch.setattr(prefetch, "start", fake_start)
+
+    response = authed_client.post("/api/channels/active", json={"id": "two"})
+
+    assert response.json()["success"] is True
+    assert steps == [
+        "stop",
+        "clear",
+        "activate:two",
+        "reset",
+        "wipe:old",
+        "start",
+    ]
+
+
+@pytest.mark.parametrize("failure_step", ["set_active", "reset", "wipe"])
+async def test_activate_channel_restarts_worker_after_exception(monkeypatch, failure_step):
+    starts = []
+
+    async def fake_stop():
+        return None
+
+    async def fake_set_active(channel_id):
+        if failure_step == "set_active":
+            raise RuntimeError("set active failed")
+        return {"success": True, "message": "updated"}
+
+    def fake_reset():
+        if failure_step == "reset":
+            raise RuntimeError("reset failed")
+
+    async def fake_wipe(channel_key):
+        if failure_step == "wipe":
+            raise RuntimeError("wipe failed")
+
+    async def fake_start():
+        starts.append(True)
+
+    monkeypatch.setattr(prefetch, "stop", fake_stop)
+    monkeypatch.setattr(telegram, "clear_messages", lambda: None)
+    monkeypatch.setattr(channels, "active_key", lambda: "old")
+    monkeypatch.setattr(channels, "set_active", fake_set_active)
+    monkeypatch.setattr(cache, "reset_accounting", fake_reset)
+    monkeypatch.setattr(main, "wipe_channel_cache", fake_wipe)
+    monkeypatch.setattr(prefetch, "start", fake_start)
+
+    with pytest.raises(RuntimeError):
+        await main.activate_channel(main.ChannelIdBody(id="two"))
+
+    assert starts == [True]
 
 
 # --- GET /api/videos ---
@@ -150,7 +289,7 @@ def point_thumb_cache_at(tmp_path, monkeypatch):
 
 
 def install_get_message(monkeypatch, msg):
-    async def fake_get_message(msg_id):
+    async def fake_get_message(msg_id, channel_key=None):
         return msg
 
     monkeypatch.setattr(telegram, "get_message", fake_get_message)
@@ -164,7 +303,7 @@ def install_get_thumbnail(monkeypatch, data):
 
 
 def install_fake_stream_range(monkeypatch):
-    async def fake_stream_range(msg, start, end):
+    async def fake_stream_range(channel_key, msg, start, end):
         yield DATA[start:end + 1]
 
     monkeypatch.setattr(streaming, "stream_range", fake_stream_range)

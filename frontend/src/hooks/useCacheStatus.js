@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchCacheStatus, postCachePaused } from "../api/client";
+import { fetchCacheStatus, postCacheClear, postCachePaused, postCacheSettings } from "../api/client";
 
 // Polls cache status while enabled, derives transfer speed from consecutive
 // successful samples, and exposes a pause toggle that refreshes immediately.
@@ -80,5 +80,25 @@ export function useCacheStatus(enabled) {
     if (result.success) await fetchStatus(generation);
   };
 
-  return { status, speedBps, togglePaused };
+  const saveSettings = async (fields) => {
+    if (status === null || authenticationStoppedRef.current) return;
+
+    const generation = generationRef.current;
+    const result = await postCacheSettings(fields);
+    if (!enabledRef.current || generation !== generationRef.current) return result;
+    if (result.success) await fetchStatus(generation);
+    return result;
+  };
+
+  const clearCache = async () => {
+    if (status === null || authenticationStoppedRef.current) return;
+
+    const generation = generationRef.current;
+    const result = await postCacheClear();
+    if (!enabledRef.current || generation !== generationRef.current) return result;
+    if (result.success) await fetchStatus(generation);
+    return result;
+  };
+
+  return { status, speedBps, togglePaused, saveSettings, clearCache };
 }

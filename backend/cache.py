@@ -14,20 +14,54 @@ import traceback
 from pathlib import Path
 
 from config import CACHE_DIR, CACHE_MAX_GB
+import channels
 
 CACHE_ROOT = Path(CACHE_DIR)
 MAX_BYTES = int(CACHE_MAX_GB * 1024**3)
+OWNER_MARKER = ".tg-cache"
 
 _total_bytes = None  # lazily initialised; rebuilt by scan after restart
 _video_bytes: dict[int, int] | None = None
 
 
+def configure(root, max_bytes) -> None:
+    """Apply cache settings, claim the root, and invalidate accounting."""
+    global CACHE_ROOT, MAX_BYTES
+    CACHE_ROOT = Path(root)
+    MAX_BYTES = int(max_bytes)
+    mark_owned(CACHE_ROOT)
+    reset_accounting()
+
+
+# --- ownership marker ---
+# Deletion paths only ever touch roots carrying this marker, so a mistyped
+# cache location can never cost data that this app did not write. Callers of
+# configure() must validate foreign directories first — configure claims
+# whatever root it is given.
+
+
+def mark_owned(root) -> None:
+    """Write the marker that permits cache deletion beneath root."""
+    try:
+        (Path(root) / OWNER_MARKER).touch()
+    except OSError:
+        report_error(f"writing owner marker in {root}")
+
+
+def is_owned(root) -> bool:
+    """Return whether this app has claimed root as a cache directory."""
+    try:
+        return (Path(root) / OWNER_MARKER).exists()
+    except OSError:
+        return False
+
+
 # --- blocks ---
 
 
-def read_block(msg_id: int, block_idx: int) -> bytes | None:
+def read_block(channel_key: str, msg_id: int, block_idx: int) -> bytes | None:
     """Return a cached block (touching its mtime for LRU), or None."""
-    path = build_block_path(msg_id, block_idx)
+    path = build_block_path(channel_key, msg_id, block_idx)
     try:
         data = path.read_bytes()
         os.utime(path)
@@ -36,11 +70,11 @@ def read_block(msg_id: int, block_idx: int) -> bytes | None:
         return None
 
 
-def write_block(msg_id: int, block_idx: int, data: bytes) -> None:
+def write_block(channel_key: str, msg_id: int, block_idx: int, data: bytes) -> None:
     """Atomically store a block, then evict oldest blocks over the cap."""
-    if not data:
+    if not data or channel_key != channels.active_key():
         return
-    path = build_block_path(msg_id, block_idx)
+    path = build_block_path(channel_key, msg_id, block_idx)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -53,24 +87,24 @@ def write_block(msg_id: int, block_idx: int, data: bytes) -> None:
     evict_until_under_cap()
 
 
-def has_block(msg_id: int, block_idx: int) -> bool:
-    return build_block_path(msg_id, block_idx).exists()
+def has_block(channel_key: str, msg_id: int, block_idx: int) -> bool:
+    return build_block_path(channel_key, msg_id, block_idx).exists()
 
 
 # --- thumbs ---
 
 
-def read_thumb(msg_id: int) -> bytes | None:
+def read_thumb(channel_key: str, msg_id: int) -> bytes | None:
     try:
-        return build_thumb_path(msg_id).read_bytes()
+        return build_thumb_path(channel_key, msg_id).read_bytes()
     except OSError:
         return None
 
 
-def write_thumb(msg_id: int, data: bytes) -> None:
-    if not data:
+def write_thumb(channel_key: str, msg_id: int, data: bytes) -> None:
+    if not data or channel_key != channels.active_key():
         return
-    path = build_thumb_path(msg_id)
+    path = build_thumb_path(channel_key, msg_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -109,6 +143,12 @@ def evict_until_under_cap() -> None:
 def current_total() -> int:
     initialise_accounting()
     return _total_bytes
+
+
+def reset_accounting() -> None:
+    global _total_bytes, _video_bytes
+    _total_bytes = None
+    _video_bytes = None
 
 
 def grow_total(added: int) -> None:
@@ -188,12 +228,12 @@ def iter_block_files():
 # --- pure builders ---
 
 
-def build_block_path(msg_id: int, block_idx: int) -> Path:
-    return CACHE_ROOT / "blocks" / str(msg_id) / f"{block_idx}.blk"
+def build_block_path(channel_key: str, msg_id: int, block_idx: int) -> Path:
+    return CACHE_ROOT / "blocks" / channel_key / str(msg_id) / f"{block_idx}.blk"
 
 
-def build_thumb_path(msg_id: int) -> Path:
-    return CACHE_ROOT / "thumbs" / f"{msg_id}.jpg"
+def build_thumb_path(channel_key: str, msg_id: int) -> Path:
+    return CACHE_ROOT / "thumbs" / channel_key / f"{msg_id}.jpg"
 
 
 def report_error(context: str) -> None:

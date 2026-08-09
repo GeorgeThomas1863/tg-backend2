@@ -1,9 +1,16 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  activateChannel,
+  addChannel,
   fetchCacheStatus,
+  fetchChannels,
   fetchVideos,
   postCachePaused,
+  postCacheClear,
+  postCacheSettings,
   postLogin,
+  removeChannel,
+  setDefaultChannel,
   streamUrl,
   thumbUrl,
 } from "./client";
@@ -92,6 +99,28 @@ describe("fetchCacheStatus", () => {
   });
 });
 
+describe("fetchChannels", () => {
+  test("requests channels with credentials and returns parsed JSON", async () => {
+    const response = { channels: [{ id: "1", channel: "news" }] };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(fetchChannels()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/channels`, {
+      credentials: "include",
+    });
+  });
+
+  test("throws an Error carrying .status when the response is not ok", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500 });
+
+    const error = await fetchChannels().catch((e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.status).toBe(500);
+    expect(error.message).toBe("HTTP 500");
+  });
+});
+
 describe("postLogin", () => {
   test("returns {success:false} WITHOUT calling fetch when pw is empty", async () => {
     const result = await postLogin("");
@@ -161,6 +190,134 @@ describe("postCachePaused", () => {
     await expect(postCachePaused(true)).resolves.toEqual({
       success: false,
       message: "Failed to fetch",
+    });
+  });
+});
+
+describe("postCacheSettings", () => {
+  test("posts only cache_max_gb with credentials and returns parsed JSON", async () => {
+    const response = { success: true, message: "Cache size updated" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(postCacheSettings({ cache_max_gb: 50 })).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/cache/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ cache_max_gb: 50 }),
+    });
+  });
+
+  test("posts only cache_dir when it is the only provided field", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, message: "Updated" }) });
+
+    await postCacheSettings({ cache_dir: "D:\\cache" });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ cache_dir: "D:\\cache" });
+  });
+
+  test("posts both provided fields", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, message: "Updated" }) });
+
+    await postCacheSettings({ cache_dir: "D:\\cache", cache_max_gb: 50 });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      cache_dir: "D:\\cache",
+      cache_max_gb: 50,
+    });
+  });
+
+  test("returns the backend message on a non-ok response", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ message: "Invalid cache directory" }),
+    });
+
+    await expect(postCacheSettings({ cache_dir: "relative" })).resolves.toEqual({
+      success: false,
+      message: "Invalid cache directory",
+    });
+  });
+
+  test("returns a failure result instead of throwing on a network error", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(postCacheSettings({ cache_max_gb: 50 })).resolves.toEqual({
+      success: false,
+      message: "Failed to fetch",
+    });
+    expect(console.log).toHaveBeenCalledWith("CACHE SETTINGS ERROR: Failed to fetch");
+  });
+});
+
+describe("postCacheClear", () => {
+  test("posts without a body and returns parsed JSON", async () => {
+    const response = { success: true, message: "Cache cleared" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(postCacheClear()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/cache/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    });
+  });
+
+  test("returns the backend message on failure", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({ message: "Clear failed" }) });
+    await expect(postCacheClear()).resolves.toEqual({ success: false, message: "Clear failed" });
+  });
+
+  test("returns a failure result on a network error", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    await expect(postCacheClear()).resolves.toEqual({ success: false, message: "Failed to fetch" });
+    expect(console.log).toHaveBeenCalledWith("CACHE CLEAR ERROR: Failed to fetch");
+  });
+});
+
+describe("channel mutations", () => {
+  test.each([
+    ["addChannel", addChannel, "newschannel", `${BASE}/api/channels`, "POST", { channel: "newschannel" }],
+    ["setDefaultChannel", setDefaultChannel, "abc", `${BASE}/api/channels/default`, "POST", { id: "abc" }],
+    ["activateChannel", activateChannel, "abc", `${BASE}/api/channels/active`, "POST", { id: "abc" }],
+  ])("%s sends the expected JSON request", async (_name, operation, input, url, method, body) => {
+    const response = { success: true, message: "Done" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(operation(input)).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(body),
+    });
+  });
+
+  test("removeChannel sends DELETE without a body", async () => {
+    const response = { success: true, message: "Removed" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(removeChannel("abc")).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/channels/abc`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    });
+  });
+
+  test("returns the backend message for a failed mutation", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ message: "Channel is active" }),
+    });
+
+    await expect(removeChannel("abc")).resolves.toEqual({
+      success: false,
+      message: "Channel is active",
     });
   });
 });

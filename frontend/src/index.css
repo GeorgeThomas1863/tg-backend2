@@ -71,6 +71,22 @@ button {
   font-weight: 600;
 }
 
+.ledger-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.channel-header-btn {
+  color: var(--green);
+  font: 11.5px var(--font-mono);
+  padding: 2px 0;
+}
+
+.channel-header-btn:hover {
+  text-decoration: underline;
+}
+
 .ledger-summary {
   color: var(--muted);
   font-size: 12.5px;
@@ -297,6 +313,73 @@ button {
   background: var(--green);
 }
 
+.cache-drawer-settings {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+  font: 11px var(--font-mono);
+}
+
+.cache-drawer-settings-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.cache-drawer-settings-label {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.cache-drawer-settings-input {
+  min-width: 0;
+  width: 100%;
+  padding: 7px 8px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  font: 11px var(--font-mono);
+}
+
+.cache-drawer-settings-save,
+.cache-drawer-settings-confirm button,
+.cache-drawer-clear,
+.cache-drawer-clear-actions button {
+  color: var(--green);
+  font: 10.5px var(--font-mono);
+}
+
+.cache-drawer-settings-save {
+  padding-bottom: 7px;
+}
+
+.cache-drawer-settings-save:disabled,
+.cache-drawer-settings-confirm button:disabled,
+.cache-drawer-clear:disabled,
+.cache-drawer-clear-actions button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.cache-drawer-clear {
+  margin-top: 12px;
+}
+
+.cache-drawer-clear-confirm {
+  margin-top: 8px;
+}
+
+.cache-drawer-settings-error {
+  margin-top: 8px;
+  color: var(--red, #a33);
+  font-size: 10.5px;
+}
+
 .cache-drawer-active {
   margin-bottom: 14px;
   padding: 10px 12px;
@@ -324,6 +407,132 @@ button {
 .cache-drawer-item-state {
   color: var(--muted);
   font: 10.5px var(--font-mono);
+}
+
+/*--- channel drawer ---*/
+
+.channel-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  padding: 20px 18px;
+  background: var(--paper);
+  border-left: 1px solid var(--hairline);
+  box-shadow: -12px 0 28px rgba(32,33,36,0.08);
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.channel-drawer-title,
+.channel-drawer-item-heading,
+.channel-drawer-actions,
+.channel-drawer-add {
+  display: flex;
+  align-items: center;
+}
+
+.channel-drawer-title {
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.channel-drawer-close {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.channel-drawer-list {
+  margin-top: 14px;
+}
+
+.channel-drawer-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.channel-drawer-item-heading {
+  gap: 6px;
+}
+
+.channel-drawer-item-title {
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-drawer-item-channel {
+  margin-top: 2px;
+  color: var(--muted);
+  font: 10.5px var(--font-mono);
+}
+
+.channel-drawer-badge {
+  padding: 1px 5px;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  font: 9.5px var(--font-mono);
+}
+
+.channel-drawer-badge.active {
+  color: var(--green);
+}
+
+.channel-drawer-actions {
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.channel-drawer-actions button,
+.channel-drawer-add-button {
+  color: var(--green);
+  font: 10.5px var(--font-mono);
+}
+
+.channel-drawer-actions button:disabled,
+.channel-drawer-add-button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.channel-drawer-confirm {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--hover);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.channel-drawer-error {
+  margin-top: 12px;
+  color: var(--error);
+  font-size: 11.5px;
+}
+
+.channel-drawer-add {
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.channel-drawer-input {
+  min-width: 0;
+  flex: 1;
+  padding: 7px 8px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  font: 11px var(--font-mono);
+}
+
+.channel-drawer-input:disabled {
+  color: var(--muted);
 }
 
 /*--- password gate (auth page look from nork-displayer-1950 / resume-builder) ---*/

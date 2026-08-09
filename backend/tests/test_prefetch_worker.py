@@ -13,10 +13,10 @@ from config import BLOCK_SIZE
 
 async def test_urgent_download_pauses_new_worker_downloads(tmp_path, monkeypatch):
     world = install_world(tmp_path, monkeypatch, [make_msg(1), make_msg(2)])
-    urgent = asyncio.create_task(prefetch.get_block(world["messages"][2], 0, True))
+    urgent = asyncio.create_task(prefetch.get_block("test", world["messages"][2], 0, True))
     await wait_until(lambda: world["calls"] == [(2, 0)])
 
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
     await prefetch.start()
     await yield_many()
     assert world["calls"] == [(2, 0)]
@@ -39,11 +39,11 @@ async def test_urgent_during_selection_delays_worker_download(tmp_path, monkeypa
         return world["messages"].get(msg_id)
 
     monkeypatch.setattr(telegram, "get_message", blocking_get_message)
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
     await prefetch.start()
     await selection_started.wait()
 
-    urgent = asyncio.create_task(prefetch.get_block(world["messages"][2], 0, True))
+    urgent = asyncio.create_task(prefetch.get_block("test", world["messages"][2], 0, True))
     await wait_until(lambda: world["calls"] == [(2, 0)])
     release_selection.set()
     await yield_many()
@@ -66,12 +66,12 @@ async def test_urgent_get_block_returns_none_on_downloader_exception(
         outcomes={(1, 0, 1): RuntimeError("broken")},
     )
 
-    assert await prefetch.get_block(world["messages"][1], 0, True) is None
+    assert await prefetch.get_block("test", world["messages"][1], 0, True) is None
 
 
 async def test_cancelled_urgent_get_block_propagates(tmp_path, monkeypatch):
     world = install_world(tmp_path, monkeypatch, [make_msg(1)])
-    task = asyncio.create_task(prefetch.get_block(world["messages"][1], 0, True))
+    task = asyncio.create_task(prefetch.get_block("test", world["messages"][1], 0, True))
     await wait_until(lambda: world["calls"] == [(1, 0)])
 
     task.cancel()
@@ -88,11 +88,11 @@ async def test_different_urgent_block_preempts_and_worker_retries(
     tmp_path, monkeypatch
 ):
     world = install_world(tmp_path, monkeypatch, [make_msg(1), make_msg(2)])
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
     await prefetch.start()
     await wait_until(lambda: world["calls"] == [(1, 0)])
 
-    urgent = asyncio.create_task(prefetch.get_block(world["messages"][2], 0, True))
+    urgent = asyncio.create_task(prefetch.get_block("test", world["messages"][2], 0, True))
     await wait_until(lambda: (1, 0, 1) in world["cancelled"])
     await wait_until(lambda: (2, 0) in world["calls"])
     world["gates"][(2, 0, 1)].set()
@@ -100,27 +100,27 @@ async def test_different_urgent_block_preempts_and_worker_retries(
 
     await wait_until(lambda: world["calls"].count((1, 0)) == 2)
     world["gates"][(1, 0, 2)].set()
-    await wait_until(lambda: cache.has_block(1, 0))
+    await wait_until(lambda: cache.has_block("test", 1, 0))
     await prefetch.stop()
 
     assert world["calls"].count((1, 0)) == 2
-    assert cache.read_block(1, 0) == block_bytes(1, 0)
+    assert cache.read_block("test", 1, 0) == block_bytes(1, 0)
 
 
 async def test_same_urgent_block_shares_worker_download(tmp_path, monkeypatch):
     world = install_world(tmp_path, monkeypatch, [make_msg(1)])
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
     await prefetch.start()
     await wait_until(lambda: world["calls"] == [(1, 0)])
 
-    urgent = asyncio.create_task(prefetch.get_block(world["messages"][1], 0, True))
+    urgent = asyncio.create_task(prefetch.get_block("test", world["messages"][1], 0, True))
     await yield_many()
     assert world["calls"] == [(1, 0)]
     assert world["cancelled"] == []
 
     world["gates"][(1, 0, 1)].set()
     assert await urgent == block_bytes(1, 0)
-    await wait_until(lambda: cache.has_block(1, 0))
+    await wait_until(lambda: cache.has_block("test", 1, 0))
     await prefetch.stop()
 
     assert world["calls"] == [(1, 0)]
@@ -133,12 +133,12 @@ async def test_worker_survives_none_and_exception_then_moves_on(
     world = install_world(
         tmp_path, monkeypatch, [make_msg(1, 3 * BLOCK_SIZE)], outcomes=outcomes
     )
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
     await prefetch.start()
 
     await wait_until(lambda: (1, 2) in world["calls"])
     world["gates"][(1, 2, 1)].set()
-    await wait_until(lambda: cache.has_block(1, 2))
+    await wait_until(lambda: cache.has_block("test", 1, 2))
     assert prefetch._worker_task is not None
     assert not prefetch._worker_task.done()
     await prefetch.stop()
@@ -151,7 +151,7 @@ async def test_worker_survives_none_and_exception_then_moves_on(
 
 async def test_stop_cancels_worker_and_inflight_download(tmp_path, monkeypatch):
     world = install_world(tmp_path, monkeypatch, [make_msg(1)])
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
     await prefetch.start()
     worker = prefetch._worker_task
     await wait_until(lambda: world["calls"] == [(1, 0)])
@@ -169,12 +169,12 @@ async def test_stop_cancels_worker_and_inflight_download(tmp_path, monkeypatch):
 async def test_disabled_prewarm_still_runs_pin_tier(tmp_path, monkeypatch):
     world = install_world(tmp_path, monkeypatch, [make_msg(1)])
     monkeypatch.setattr(config, "PREWARM_ENABLED", False)
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
 
     await prefetch.start()
     await wait_until(lambda: world["calls"] == [(1, 0)])
     world["gates"][(1, 0, 1)].set()
-    await wait_until(lambda: cache.has_block(1, 0))
+    await wait_until(lambda: cache.has_block("test", 1, 0))
     await prefetch.stop()
 
     assert world["calls"] == [(1, 0)]
@@ -183,7 +183,7 @@ async def test_disabled_prewarm_still_runs_pin_tier(tmp_path, monkeypatch):
 async def test_paused_worker_selects_no_job(tmp_path, monkeypatch):
     install_world(tmp_path, monkeypatch, [make_msg(1)])
     monkeypatch.setattr(config, "PREWARM_ENABLED", True)
-    prefetch.note_playhead(1, 0)
+    prefetch.note_playhead("test", 1, 0)
     prefetch.set_paused(True)
 
     assert await prefetch.select_worker_job() is None
@@ -211,8 +211,8 @@ async def test_resuming_wakes_parked_worker(tmp_path, monkeypatch):
 
 async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch):
     install_world(tmp_path, monkeypatch, [])
-    pin_job = (make_msg(1), 0)
-    prewarm_job = (make_msg(2), 0)
+    pin_job = ("test", make_msg(1), 0)
+    prewarm_job = ("test", make_msg(2), 0)
 
     async def select_pin():
         return pin_job
@@ -227,7 +227,7 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
 
     monkeypatch.setattr(prefetch, "select_pin_job", select_pin)
     assert await prefetch.select_worker_job() == pin_job
-    prefetch._worker_download_key = (1, 0)
+    prefetch._worker_download_key = ("test", 1, 0)
     assert prefetch.status() == {
         "paused": False,
         "active": {"msg_id": 1, "tier": "pin"},
@@ -238,7 +238,7 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
     monkeypatch.setattr(prefetch, "select_prewarm_job", select_prewarm)
     monkeypatch.setattr(config, "PREWARM_ENABLED", True)
     assert await prefetch.select_worker_job() == prewarm_job
-    prefetch._worker_download_key = (2, 0)
+    prefetch._worker_download_key = ("test", 2, 0)
     assert prefetch.status() == {
         "paused": False,
         "active": {"msg_id": 2, "tier": "prewarm"},

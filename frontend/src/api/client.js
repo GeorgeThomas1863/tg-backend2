@@ -26,6 +26,16 @@ export async function fetchCacheStatus() {
   return res.json();
 }
 
+export async function fetchChannels() {
+  const res = await fetch(`${BASE}/api/channels`, { credentials: "include" });
+  if (!res.ok) {
+    const error = new Error(`HTTP ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+}
+
 export async function postLogin(pw) {
   if (!pw) return { success: false, message: "No password provided" };
 
@@ -72,6 +82,56 @@ export async function postCachePaused(paused) {
     return res.json();
   } catch (e) {
     console.log("CACHE PAUSED ERROR: " + e.message);
+    return { success: false, message: e.message };
+  }
+}
+
+export async function postCacheSettings(fields) {
+  return mutateChannel("/api/cache/settings", "POST", fields, "CACHE SETTINGS");
+}
+
+export async function postCacheClear() {
+  return mutateChannel("/api/cache/clear", "POST", null, "CACHE CLEAR");
+}
+
+export async function addChannel(raw) {
+  return mutateChannel("/api/channels", "POST", { channel: raw }, "ADD CHANNEL");
+}
+
+export async function setDefaultChannel(id) {
+  return mutateChannel("/api/channels/default", "POST", { id }, "SET DEFAULT CHANNEL");
+}
+
+export async function activateChannel(id) {
+  return mutateChannel("/api/channels/active", "POST", { id }, "ACTIVATE CHANNEL");
+}
+
+export async function removeChannel(id) {
+  return mutateChannel(`/api/channels/${id}`, "DELETE", null, "REMOVE CHANNEL");
+}
+
+async function mutateChannel(path, method, body, errorLabel) {
+  try {
+    const options = {
+      method,
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    };
+    if (body !== null) options.body = JSON.stringify(body);
+
+    const res = await fetch(`${BASE}${path}`, options);
+    if (!res.ok) {
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Some proxy/server errors do not include a JSON response body.
+      }
+      return { success: false, message: data?.message || `HTTP ${res.status}` };
+    }
+    return res.json();
+  } catch (e) {
+    console.log(`${errorLabel} ERROR: ${e.message}`);
     return { success: false, message: e.message };
   }
 }

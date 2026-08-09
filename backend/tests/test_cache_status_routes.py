@@ -2,6 +2,7 @@ import pytest
 
 import cache
 import prefetch
+import settings
 
 
 def test_cache_routes_require_authentication(client):
@@ -28,6 +29,11 @@ def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active):
     monkeypatch.setattr(cache, "current_total", lambda: 1234)
     monkeypatch.setattr(cache, "MAX_BYTES", 5678)
     monkeypatch.setattr(cache, "video_totals", lambda: {11: 100, 22: 200})
+    monkeypatch.setattr(
+        settings,
+        "effective",
+        lambda: {"cache_dir": "/test/cache", "cache_max_gb": 12.5},
+    )
 
     response = authed_client.get("/api/cache/status")
 
@@ -38,6 +44,8 @@ def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active):
         "paused": True,
         "active": active,
         "videos": {"11": 100, "22": 200},
+        "cache_dir": "/test/cache",
+        "max_gb": 12.5,
     }
     assert status_calls == 1
 
@@ -49,6 +57,11 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
     monkeypatch.setattr(cache, "current_total", raise_accounting_error)
     monkeypatch.setattr(cache, "MAX_BYTES", 5678)
     monkeypatch.setattr(cache, "video_totals", lambda: {11: 100})
+    monkeypatch.setattr(
+        settings,
+        "effective",
+        lambda: {"cache_dir": "/fallback/cache", "cache_max_gb": 8.0},
+    )
     monkeypatch.setattr(
         prefetch,
         "status",
@@ -64,6 +77,8 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
         "paused": True,
         "active": {"msg_id": 42, "tier": "ahead"},
         "videos": {"11": 100},
+        "cache_dir": "/fallback/cache",
+        "max_gb": 8.0,
     }
 
 

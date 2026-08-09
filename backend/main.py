@@ -4,6 +4,9 @@ All Telegram work is delegated to the telegram module.
 """
 
 from contextlib import asynccontextmanager
+import asyncio
+import logging
+import shutil
 
 import bcrypt
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -13,8 +16,11 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 import cache
+import channels
+import db
 import downloader
 import prefetch
+import settings
 import streaming
 import telegram
 from config import (
@@ -27,15 +33,21 @@ from config import (
 )
 from rate_limit import AuthRateLimiter
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await db.connect()
     await telegram.connect()
+    await channels.startup()
+    await settings.startup()
     await prefetch.start()
     yield
     await prefetch.stop()
     await downloader.disconnect_all()
     await telegram.disconnect()
+    await db.disconnect()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -67,6 +79,19 @@ class AuthBody(BaseModel):
 
 class CachePausedBody(BaseModel):
     paused: bool
+
+
+class CacheSettingsBody(BaseModel):
+    cache_dir: str | None = None
+    cache_max_gb: float | None = None
+
+
+class ChannelBody(BaseModel):
+    channel: str
+
+
+class ChannelIdBody(BaseModel):
+    id: str
 
 
 def check_password(pw: str) -> bool:
@@ -113,6 +138,7 @@ async def login(body: AuthBody, request: Request):
 @app.get("/api/cache/status", dependencies=[Depends(require_auth)])
 async def cache_status():
     worker = prefetch.status()
+    effective_settings = settings.effective()
     try:
         total_bytes = cache.current_total()
     except Exception:
@@ -124,6 +150,8 @@ async def cache_status():
         "paused": worker["paused"],
         "active": worker["active"],
         "videos": cache.video_totals(),
+        "cache_dir": effective_settings["cache_dir"],
+        "max_gb": effective_settings["cache_max_gb"],
     }
 
 
@@ -134,6 +162,110 @@ async def set_cache_paused(body: CachePausedBody):
         "success": True,
         "message": "Caching paused" if body.paused else "Caching resumed",
     }
+
+
+@app.post("/api/cache/clear", dependencies=[Depends(require_auth)])
+async def clear_cache():
+    await prefetch.stop()
+    try:
+        await asyncio.to_thread(settings.delete_cache_tree, cache.CACHE_ROOT)
+        cache.reset_accounting()
+        return {"success": True, "message": "Cache cleared"}
+    finally:
+        await prefetch.start()
+
+
+@app.post("/api/cache/settings", dependencies=[Depends(require_auth)])
+async def set_cache_settings(body: CacheSettingsBody):
+    if body.cache_dir is None and body.cache_max_gb is None:
+        return {"success": False, "message": "Nothing to change"}
+
+    if body.cache_dir is not None:
+        result = await apply_dir_change(body.cache_dir)
+        if not result["success"]:
+            return format_settings_result(result)
+
+    if body.cache_max_gb is not None:
+        result = await settings.apply_max_gb(body.cache_max_gb)
+
+    return format_settings_result(result)
+
+
+async def apply_dir_change(cache_dir: str) -> dict:
+    await prefetch.stop()
+    try:
+        result = await settings.change_cache_dir(cache_dir)
+    finally:
+        await prefetch.start()
+
+    if result["success"] and result.get("changed"):
+        asyncio.create_task(
+            asyncio.to_thread(settings.cleanup_old_root, result["old_root"])
+        )
+    return result
+
+
+def format_settings_result(result: dict) -> dict:
+    return {"success": result["success"], "message": result["message"]}
+
+
+# --- channels ---
+
+
+@app.get("/api/channels", dependencies=[Depends(require_auth)])
+async def get_channels():
+    return {"channels": await channels.list_channels()}
+
+
+@app.post("/api/channels", dependencies=[Depends(require_auth)])
+async def add_channel(body: ChannelBody):
+    return await channels.add_channel(body.channel.strip())
+
+
+@app.post("/api/channels/default", dependencies=[Depends(require_auth)])
+async def set_default_channel(body: ChannelIdBody):
+    return await channels.set_default(body.id)
+
+
+@app.post("/api/channels/active", dependencies=[Depends(require_auth)])
+async def activate_channel(body: ChannelIdBody):
+    await prefetch.stop()
+    try:
+        telegram.clear_messages()
+        old_key = channels.active_key()
+        result = await channels.set_active(body.id)
+        if not result["success"]:
+            return result
+        cache.reset_accounting()
+        await wipe_channel_cache(old_key)
+        return result
+    finally:
+        await prefetch.start()
+
+
+@app.delete("/api/channels/{channel_id}", dependencies=[Depends(require_auth)])
+async def remove_channel(channel_id: str):
+    return await channels.remove_channel(channel_id)
+
+
+async def wipe_channel_cache(channel_key: str | None) -> None:
+    if channel_key is None:
+        return
+    try:
+        await asyncio.gather(
+            asyncio.to_thread(
+                shutil.rmtree,
+                cache.CACHE_ROOT / "blocks" / channel_key,
+                ignore_errors=True,
+            ),
+            asyncio.to_thread(
+                shutil.rmtree,
+                cache.CACHE_ROOT / "thumbs" / channel_key,
+                ignore_errors=True,
+            ),
+        )
+    except Exception:
+        logger.exception("Failed to wipe cache for channel %r", channel_key)
 
 
 # --- videos ---
@@ -180,7 +312,10 @@ async def videos(limit: int = 50, before_id: int | None = None):
 
 @app.get("/stream/{msg_id}", dependencies=[Depends(require_auth)])
 async def stream(msg_id: int, request: Request):
-    msg = await telegram.get_message(msg_id)
+    channel_key = channels.active_key()
+    if channel_key is None:
+        raise HTTPException(status_code=404, detail="No active channel")
+    msg = await telegram.get_message(msg_id, channel_key)
     if not msg or not msg.file:
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -206,7 +341,7 @@ async def stream(msg_id: int, request: Request):
         headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
 
     return StreamingResponse(
-        streaming.stream_range(msg, start, end),
+        streaming.stream_range(channel_key, msg, start, end),
         status_code=status,
         media_type=mime,
         headers=headers,
@@ -215,11 +350,14 @@ async def stream(msg_id: int, request: Request):
 
 @app.get("/thumb/{msg_id}", dependencies=[Depends(require_auth)])
 async def thumb(msg_id: int):
-    cached = cache.read_thumb(msg_id)
+    channel_key = channels.active_key()
+    if channel_key is None:
+        raise HTTPException(status_code=404, detail="No active channel")
+    cached = cache.read_thumb(channel_key, msg_id)
     if cached:
         return build_thumb_response(cached)
 
-    msg = await telegram.get_message(msg_id)
+    msg = await telegram.get_message(msg_id, channel_key)
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -227,7 +365,7 @@ async def thumb(msg_id: int):
     if not data:
         raise HTTPException(status_code=404, detail="No thumbnail available")
 
-    cache.write_thumb(msg_id, data)
+    cache.write_thumb(channel_key, msg_id, data)
     return build_thumb_response(data)
 
 

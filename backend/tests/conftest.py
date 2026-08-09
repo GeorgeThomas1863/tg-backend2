@@ -23,6 +23,8 @@ import pytest
 os.environ["TELEGRAM_API_ID"] = "12345"
 os.environ["TELEGRAM_API_HASH"] = "test-hash"
 os.environ["TELEGRAM_CHANNEL"] = "-1001234567890"
+os.environ["MONGO_URI"] = "mongodb://localhost:27017"
+os.environ["DB_NAME"] = "test_registry"
 os.environ["SESSION_SECRET"] = "test-secret"
 os.environ["PW_HASH"] = bcrypt.hashpw(
     b"test-password", bcrypt.gensalt(rounds=4)
@@ -33,11 +35,24 @@ os.environ["TG_CONNECTIONS"] = "2"
 _original_cwd = os.getcwd()
 os.chdir(tempfile.mkdtemp(prefix="tg-backend-tests-"))
 import telegram  # noqa: E402  (must come after the chdir above)
+import cache  # noqa: E402
+import channels  # noqa: E402
+import db  # noqa: E402
 import main  # noqa: E402
 import prefetch  # noqa: E402
+import settings  # noqa: E402
 os.chdir(_original_cwd)
 
 from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def active_test_channel(monkeypatch):
+    monkeypatch.setattr(
+        channels,
+        "_active_channel",
+        {"_id": "test", "channel": "test", "title": "Test", "is_default": True},
+    )
 
 
 @pytest.fixture
@@ -55,6 +70,10 @@ def client(monkeypatch):
 
     monkeypatch.setattr(telegram, "connect", fake_connect)
     monkeypatch.setattr(telegram, "disconnect", fake_disconnect)
+    monkeypatch.setattr(db, "connect", fake_connect)
+    monkeypatch.setattr(db, "disconnect", fake_disconnect)
+    monkeypatch.setattr(channels, "startup", fake_connect)
+    monkeypatch.setattr(settings, "startup", fake_connect)
     monkeypatch.setattr(prefetch, "start", fake_prefetch_lifecycle)
     monkeypatch.setattr(prefetch, "stop", fake_prefetch_lifecycle)
     with TestClient(main.app) as test_client:

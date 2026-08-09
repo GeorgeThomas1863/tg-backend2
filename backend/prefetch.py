@@ -10,6 +10,7 @@ import asyncio
 import traceback
 
 import cache
+import channels
 import config
 import downloader
 import telegram
@@ -20,7 +21,7 @@ _urgent_empty = asyncio.Event()
 _urgent_empty.set()
 _work_available = asyncio.Event()
 
-_pin: tuple[int, int] | None = None
+_pin: tuple[str, int, int] | None = None
 _worker_task = None
 _worker_download_task = None
 _worker_download_key = None
@@ -74,6 +75,20 @@ async def stop() -> None:
         except Exception:
             report_error("stopping worker download")
     _worker_download_task = None
+    clear_runtime_state()
+
+
+def clear_runtime_state() -> None:
+    global _pin, _worker_download_key, _active_tier
+    _pin = None
+    _worker_download_key = None
+    _active_tier = None
+    _urgent_keys.clear()
+    _urgent_empty.set()
+    _work_available.clear()
+    _block_locks.clear()
+    _logged_oversized_pins.clear()
+    reset_prewarm_pass()
 
 
 def set_paused(paused: bool) -> None:
@@ -93,30 +108,30 @@ def status() -> dict:
         return {"paused": _paused, "active": None}
     return {
         "paused": _paused,
-        "active": {"msg_id": _worker_download_key[0], "tier": _active_tier},
+        "active": {"msg_id": _worker_download_key[1], "tier": _active_tier},
     }
 
 
-def note_playhead(msg_id: int, block_idx: int) -> None:
+def note_playhead(channel_key: str, msg_id: int, block_idx: int) -> None:
     """Pin a video and record its most recently served block."""
     global _pin
-    _pin = (msg_id, block_idx)
+    _pin = (channel_key, msg_id, block_idx)
     _work_available.set()
 
 
-async def get_block(msg, idx: int, urgent: bool) -> bytes | None:
+async def get_block(channel_key: str, msg, idx: int, urgent: bool) -> bytes | None:
     """Read or download one block; concurrent callers share one fetch."""
-    key = (msg.id, idx)
+    key = (channel_key, msg.id, idx)
     lock = _block_locks.setdefault(key, asyncio.Lock())
     try:
         async with lock:
-            cached = cache.read_block(msg.id, idx)
+            cached = cache.read_block(channel_key, msg.id, idx)
             if cached is not None:
                 return cached
             if urgent:
                 announce_urgent(key)
             try:
-                return await download_and_cache_block(msg, idx)
+                return await download_and_cache_block(channel_key, msg, idx)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -129,11 +144,11 @@ async def get_block(msg, idx: int, urgent: bool) -> bytes | None:
         prune_locks()
 
 
-async def download_and_cache_block(msg, idx: int) -> bytes | None:
+async def download_and_cache_block(channel_key: str, msg, idx: int) -> bytes | None:
     data = await downloader.download_block(msg, idx)
     if data is None:
         return None
-    cache.write_block(msg.id, idx, data)
+    cache.write_block(channel_key, msg.id, idx, data)
     return data
 
 
@@ -184,13 +199,15 @@ async def run_worker() -> None:
             report_error("worker iteration")
 
 
-async def run_worker_download(msg, idx: int) -> None:
+async def run_worker_download(channel_key: str, msg, idx: int) -> None:
     global _worker_download_task, _worker_download_key, _active_tier
     if not _urgent_empty.is_set():
         return
     # No await before task + key publication: check-then-publish stays atomic.
-    _worker_download_key = (msg.id, idx)
-    _worker_download_task = asyncio.create_task(get_block(msg, idx, urgent=False))
+    _worker_download_key = (channel_key, msg.id, idx)
+    _worker_download_task = asyncio.create_task(
+        get_block(channel_key, msg, idx, urgent=False)
+    )
     try:
         data = await _worker_download_task
         if data is None:
@@ -225,7 +242,7 @@ async def select_worker_job():
 
 async def select_pin_job():
     while _pin is not None:
-        msg_id = _pin[0]
+        channel_key, msg_id, _ = _pin
         try:
             msg = await telegram.get_message(msg_id)
         except Exception:
@@ -233,7 +250,7 @@ async def select_pin_job():
             return None
         if _pin is None:
             return None
-        if _pin[0] != msg_id:
+        if _pin[0] != channel_key or _pin[1] != msg_id:
             continue
         if not msg or not msg.file:
             return None
@@ -245,11 +262,11 @@ async def select_pin_job():
                 )
                 _logged_oversized_pins.add(msg.id)
             return None
-        playhead = _pin[1]
-        idx = select_pin_block(msg_id, playhead, msg.file.size)
+        playhead = _pin[2]
+        idx = select_pin_block(channel_key, msg_id, playhead, msg.file.size)
         if idx is None:
             return None
-        return msg, idx
+        return channel_key, msg, idx
     return None
 
 
@@ -259,14 +276,20 @@ async def select_pin_job():
 async def select_prewarm_job():
     global _prewarm_message
     if _prewarm_blocks:
-        return _prewarm_message, _prewarm_blocks.pop(0)
+        channel_key = channels.active_key()
+        if channel_key is None:
+            return None
+        return channel_key, _prewarm_message, _prewarm_blocks.pop(0)
     video = await find_next_prewarm_video()
     if video is None:
         return None
     msg, blocks = video
     _prewarm_message = msg
     _prewarm_blocks.extend(blocks)
-    return _prewarm_message, _prewarm_blocks.pop(0)
+    channel_key = channels.active_key()
+    if channel_key is None:
+        return None
+    return channel_key, _prewarm_message, _prewarm_blocks.pop(0)
 
 
 async def find_next_prewarm_video():
@@ -277,7 +300,10 @@ async def find_next_prewarm_video():
         msg = await resolve_prewarm_message(video["id"])
         if not msg or not msg.file:
             continue
-        blocks, remaining = build_uncached_blocks(msg.id, msg.file.size)
+        channel_key = channels.active_key()
+        if channel_key is None:
+            return None
+        blocks, remaining = build_uncached_blocks(channel_key, msg.id, msg.file.size)
         if not blocks:
             continue
         if exceeds_cache_cap(remaining):
@@ -365,14 +391,14 @@ def reset_prewarm_pass() -> None:
 # --- pure job selection ---
 
 
-def select_pin_block(msg_id: int, playhead: int, file_size: int) -> int | None:
+def select_pin_block(channel_key: str, msg_id: int, playhead: int, file_size: int) -> int | None:
     """Choose the first missing block from playhead to end, then wrap."""
     block_count = (file_size + config.BLOCK_SIZE - 1) // config.BLOCK_SIZE
     if block_count <= 0:
         return None
     cached_blocks = set()
     for idx in range(block_count):
-        if cache.has_block(msg_id, idx) or (msg_id, idx) in _failed_keys:
+        if cache.has_block(channel_key, msg_id, idx) or (msg_id, idx) in _failed_keys:
             cached_blocks.add(idx)
     return select_missing_pin_block(playhead, block_count, cached_blocks)
 
@@ -394,12 +420,12 @@ def build_pin_order(playhead: int, block_count: int) -> list[int]:
     return list(range(playhead, block_count)) + list(range(0, playhead))
 
 
-def build_uncached_blocks(msg_id: int, file_size: int) -> tuple[list[int], int]:
+def build_uncached_blocks(channel_key: str, msg_id: int, file_size: int) -> tuple[list[int], int]:
     blocks = []
     remaining = 0
     block_count = (file_size + config.BLOCK_SIZE - 1) // config.BLOCK_SIZE
     for idx in range(block_count):
-        if cache.has_block(msg_id, idx):
+        if cache.has_block(channel_key, msg_id, idx):
             continue
         remaining += min(config.BLOCK_SIZE, file_size - idx * config.BLOCK_SIZE)
         if (msg_id, idx) not in _failed_keys:
