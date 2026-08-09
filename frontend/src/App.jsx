@@ -3,18 +3,27 @@ import { useVideos } from "./hooks/useVideos";
 import { useSentinel } from "./hooks/useSentinel";
 import { useCacheStatus } from "./hooks/useCacheStatus";
 import { useChannels } from "./hooks/useChannels";
+import { useTelegramAuth } from "./hooks/useTelegramAuth";
 import { VideoRow } from "./components/VideoRow";
 import { PasswordGate } from "./components/PasswordGate";
 import { CacheDrawer } from "./components/CacheDrawer";
 import { ChannelDrawer } from "./components/ChannelDrawer";
 import { JumpControls } from "./components/JumpControls";
+import { TelegramAuthDrawer } from "./components/TelegramAuthDrawer";
 import { formatSize } from "./format";
 
 export default function App() {
   const registry = useChannels();
+  const telegram = useTelegramAuth();
   const [channelDrawerOpen, setChannelDrawerOpen] = useState(false);
+  const [telegramDrawerOpen, setTelegramDrawerOpen] = useState(false);
   const [libraryGeneration, setLibraryGeneration] = useState(0);
-  const showChannelDrawer = channelDrawerOpen || (!registry.loading && !registry.error && registry.channels.length === 0);
+  const siteUnauthorized = telegram.error === "HTTP 401";
+  const telegramAuthorized = telegram.status?.authorized === true;
+  const telegramLoggedOut = telegram.status?.authorized === false;
+  const telegramStatusFailed = !telegram.loading && !telegram.status && !siteUnauthorized;
+  const showChannelDrawer = telegramAuthorized && (channelDrawerOpen || (!registry.loading && !registry.error && registry.channels.length === 0));
+  const telegramLabel = buildTelegramLabel(telegram.status);
 
   async function loadChannel(id) {
     const result = await registry.activate(id);
@@ -27,12 +36,26 @@ export default function App() {
 
   return (
     <>
-      <VideoLibrary
-        key={`${registry.active?.id || "no-channel"}:${libraryGeneration}`}
-        activeChannel={registry.active}
-        onOpenChannels={() => setChannelDrawerOpen(true)}
-        onAuthed={registry.refresh}
-      />
+      {siteUnauthorized && <div className="page"><PasswordGate onSuccess={() => { telegram.refresh(); registry.refresh(); }} /></div>}
+      {!siteUnauthorized && telegram.loading && <div className="page page-status">Loading…</div>}
+      {!siteUnauthorized && telegramStatusFailed && (
+        <div className="page page-status">
+          Error loading Telegram status: {telegram.error || "Status unavailable"}
+        </div>
+      )}
+      {!siteUnauthorized && telegramLoggedOut && (
+        <LoggedOutLibrary telegramLabel={telegramLabel} onOpenTelegram={() => setTelegramDrawerOpen(true)} />
+      )}
+      {!siteUnauthorized && telegramAuthorized && (
+        <VideoLibrary
+          key={`${registry.active?.id || "no-channel"}:${libraryGeneration}:authorized`}
+          activeChannel={registry.active}
+          onOpenChannels={() => setChannelDrawerOpen(true)}
+          onAuthed={() => { registry.refresh(); telegram.refresh(); }}
+          telegramLabel={telegramLabel}
+          onOpenTelegram={() => setTelegramDrawerOpen(true)}
+        />
+      )}
       {showChannelDrawer && (
         <ChannelDrawer
           channels={registry.channels}
@@ -45,11 +68,23 @@ export default function App() {
           onClose={() => setChannelDrawerOpen(false)}
         />
       )}
+      {telegramDrawerOpen && !siteUnauthorized && (
+        <TelegramAuthDrawer
+          status={telegram.status}
+          busy={telegram.busy}
+          error={telegram.error}
+          onSendCode={telegram.sendCode}
+          onSubmitCode={telegram.submitCode}
+          onSubmitPassword={telegram.submitPassword}
+          onLogout={telegram.logout}
+          onClose={() => setTelegramDrawerOpen(false)}
+        />
+      )}
     </>
   );
 }
 
-function VideoLibrary({ activeChannel, onOpenChannels, onAuthed }) {
+function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, onOpenTelegram }) {
   const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos();
   const { status, speedBps, togglePaused, saveSettings, clearCache } = useCacheStatus(!loading && !unauthorized && !error);
   const [expandedId, setExpandedId] = useState(null);
@@ -88,6 +123,7 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed }) {
               </button>
             </>
           )}
+          <TelegramTrigger label={telegramLabel} onClick={onOpenTelegram} />
         </div>
       </header>
       <main>
@@ -109,6 +145,30 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed }) {
       {loadingMore && <div className="page-status">Loading more…</div>}
     </div>
   );
+}
+
+function LoggedOutLibrary({ telegramLabel, onOpenTelegram }) {
+  return (
+    <div className="page">
+      <header className="ledger-header">
+        <div className="ledger-heading"><h1>Videos</h1></div>
+        <div className="ledger-summary"><TelegramTrigger label={telegramLabel} onClick={onOpenTelegram} /></div>
+      </header>
+      <main className="page-status telegram-logged-out">
+        <p>Telegram is logged out. Log in to load and stream videos.</p>
+        <button className="telegram-login-button" type="button" onClick={onOpenTelegram}>Log in</button>
+      </main>
+    </div>
+  );
+}
+
+function TelegramTrigger({ label, onClick }) {
+  return <button className="telegram-header-btn" type="button" onClick={onClick}>{label} ▸</button>;
+}
+
+function buildTelegramLabel(status) {
+  if (!status?.authorized) return "Telegram · logged out";
+  return `Telegram · ${status.user?.username || status.user?.phone || "connected"}`;
 }
 
 const buildRowList = (videos, expandedId, toggleRow, status) => videos.map((video) => (

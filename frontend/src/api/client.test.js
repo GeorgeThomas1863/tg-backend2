@@ -5,10 +5,15 @@ import {
   fetchCacheStatus,
   fetchChannels,
   fetchVideos,
+  fetchTelegramAuthStatus,
   postCachePaused,
   postCacheClear,
   postCacheSettings,
   postLogin,
+  postTelegramCode,
+  postTelegramLogout,
+  postTelegramPassword,
+  postTelegramPhone,
   removeChannel,
   setDefaultChannel,
   streamUrl,
@@ -126,6 +131,50 @@ describe("fetchChannels", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.status).toBe(500);
     expect(error.message).toBe("HTTP 500");
+  });
+});
+
+describe("Telegram auth client", () => {
+  test("fetches status with credentials", async () => {
+    const response = { authorized: false, user: null, pending_step: "code" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+    await expect(fetchTelegramAuthStatus()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/telegram/status`, { credentials: "include" });
+  });
+
+  test("status throws with the HTTP status", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 502 });
+    const error = await fetchTelegramAuthStatus().catch((caught) => caught);
+    expect(error.message).toBe("HTTP 502");
+    expect(error.status).toBe(502);
+  });
+
+  test.each([
+    [postTelegramPhone, "+1555", "/api/telegram/login/start", { phone: "+1555" }],
+    [postTelegramCode, "12345", "/api/telegram/login/code", { code: "12345" }],
+    [postTelegramPassword, "secret", "/api/telegram/login/password", { password: "secret" }],
+  ])("posts Telegram JSON to the fixed endpoint", async (operation, value, path, body) => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+    await operation(value);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
+  });
+
+  test("logout posts without a body", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+    await postTelegramLogout();
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/telegram/logout`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include" });
+  });
+
+  test("mutations use backend messages and HTTP fallback", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429, json: async () => ({ message: "Slow down" }) }).mockResolvedValueOnce({ ok: false, status: 500, json: async () => { throw new Error("bad json"); } });
+    await expect(postTelegramCode("1")).resolves.toEqual({ success: false, message: "Slow down" });
+    await expect(postTelegramCode("1")).resolves.toEqual({ success: false, message: "HTTP 500" });
+  });
+
+  test("mutations convert network rejection to failure", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    await expect(postTelegramLogout()).resolves.toEqual({ success: false, message: "Failed to fetch" });
   });
 });
 

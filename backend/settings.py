@@ -20,6 +20,8 @@ __all__ = [
     "change_cache_dir",
     "cleanup_old_root",
     "delete_cache_tree",
+    "get_last_account_id",
+    "set_last_account_id",
 ]
 
 
@@ -122,6 +124,22 @@ def delete_cache_tree(root) -> None:
             shutil.rmtree(root / name, ignore_errors=True)
         except Exception:
             logger.exception("Failed deleting cache subtree %s", root / name)
+
+
+async def get_last_account_id() -> int | None:
+    """Return the identity that most recently owned the disk cache."""
+    try:
+        document = await get_collection().find_one({"_id": "cache"}) or {}
+    except Exception:
+        logger.exception("Failed loading the last Telegram account identity")
+        return None
+    value = document.get("last_account_id")
+    return value if isinstance(value, int) else None
+
+
+async def set_last_account_id(account_id: int) -> bool:
+    """Persist the identity that currently owns the disk cache."""
+    return await _persist({"last_account_id": account_id})
 
 
 async def _load_document() -> dict:

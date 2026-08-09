@@ -23,6 +23,7 @@ import prefetch
 import settings
 import streaming
 import telegram
+import tg_auth
 from config import (
     AUTH_MAX_ATTEMPTS,
     AUTH_WINDOW_SECONDS,
@@ -40,9 +41,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     await db.connect()
     await telegram.connect()
+    authorized = await telegram.is_authorized()
     await channels.startup()
     await settings.startup()
-    await prefetch.start()
+    if authorized:
+        await prefetch.start()
     yield
     await prefetch.stop()
     await downloader.disconnect_all()
@@ -75,6 +78,18 @@ app.add_middleware(
 
 class AuthBody(BaseModel):
     pw: str
+
+
+class TelegramPhoneBody(BaseModel):
+    phone: str
+
+
+class TelegramCodeBody(BaseModel):
+    code: str
+
+
+class TelegramPasswordBody(BaseModel):
+    password: str
 
 
 class CachePausedBody(BaseModel):
@@ -130,6 +145,55 @@ async def login(body: AuthBody, request: Request):
     auth_limiter.clear(client_ip)
     request.session["authenticated"] = True
     return {"success": True, "message": "Authenticated"}
+
+
+# --- Telegram account auth ---
+
+
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def telegram_auth_response(result: dict):
+    retry_after = result.pop("retry_after", None)
+    if retry_after is None:
+        return result
+    return JSONResponse(
+        status_code=429,
+        content=result,
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+@app.get("/api/telegram/status", dependencies=[Depends(require_auth)])
+async def telegram_status():
+    try:
+        return await tg_auth.status()
+    except tg_auth.TelegramRequestError:
+        raise HTTPException(status_code=502, detail="Telegram request failed")
+
+
+@app.post("/api/telegram/login/start", dependencies=[Depends(require_auth)])
+async def telegram_login_start(body: TelegramPhoneBody, request: Request):
+    result = await tg_auth.start_login(body.phone, client_ip(request))
+    return telegram_auth_response(result)
+
+
+@app.post("/api/telegram/login/code", dependencies=[Depends(require_auth)])
+async def telegram_login_code(body: TelegramCodeBody, request: Request):
+    result = await tg_auth.submit_code(body.code, client_ip(request))
+    return telegram_auth_response(result)
+
+
+@app.post("/api/telegram/login/password", dependencies=[Depends(require_auth)])
+async def telegram_login_password(body: TelegramPasswordBody, request: Request):
+    result = await tg_auth.submit_password(body.password, client_ip(request))
+    return telegram_auth_response(result)
+
+
+@app.post("/api/telegram/logout", dependencies=[Depends(require_auth)])
+async def telegram_logout():
+    return await tg_auth.logout()
 
 
 # --- cache ---

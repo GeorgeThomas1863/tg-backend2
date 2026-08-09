@@ -38,6 +38,16 @@ export async function fetchChannels() {
   return res.json();
 }
 
+export async function fetchTelegramAuthStatus() {
+  const res = await fetch(`${BASE}/api/telegram/status`, { credentials: "include" });
+  if (!res.ok) {
+    const error = new Error(`HTTP ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+}
+
 export async function postLogin(pw) {
   if (!pw) return { success: false, message: "No password provided" };
 
@@ -89,30 +99,46 @@ export async function postCachePaused(paused) {
 }
 
 export async function postCacheSettings(fields) {
-  return mutateChannel("/api/cache/settings", "POST", fields, "CACHE SETTINGS");
+  return mutate("/api/cache/settings", "POST", fields, "CACHE SETTINGS");
 }
 
 export async function postCacheClear() {
-  return mutateChannel("/api/cache/clear", "POST", null, "CACHE CLEAR");
+  return mutate("/api/cache/clear", "POST", null, "CACHE CLEAR");
 }
 
 export async function addChannel(raw) {
-  return mutateChannel("/api/channels", "POST", { channel: raw }, "ADD CHANNEL");
+  return mutate("/api/channels", "POST", { channel: raw }, "ADD CHANNEL");
 }
 
 export async function setDefaultChannel(id) {
-  return mutateChannel("/api/channels/default", "POST", { id }, "SET DEFAULT CHANNEL");
+  return mutate("/api/channels/default", "POST", { id }, "SET DEFAULT CHANNEL");
 }
 
 export async function activateChannel(id) {
-  return mutateChannel("/api/channels/active", "POST", { id }, "ACTIVATE CHANNEL");
+  return mutate("/api/channels/active", "POST", { id }, "ACTIVATE CHANNEL");
 }
 
 export async function removeChannel(id) {
-  return mutateChannel(`/api/channels/${id}`, "DELETE", null, "REMOVE CHANNEL");
+  return mutate(`/api/channels/${id}`, "DELETE", null, "REMOVE CHANNEL");
 }
 
-async function mutateChannel(path, method, body, errorLabel) {
+export function postTelegramPhone(phone) {
+  return mutate("/api/telegram/login/start", "POST", { phone }, "TELEGRAM LOGIN START");
+}
+
+export function postTelegramCode(code) {
+  return mutate("/api/telegram/login/code", "POST", { code }, "TELEGRAM LOGIN CODE");
+}
+
+export function postTelegramPassword(password) {
+  return mutate("/api/telegram/login/password", "POST", { password }, "TELEGRAM LOGIN PASSWORD");
+}
+
+export function postTelegramLogout() {
+  return mutate("/api/telegram/logout", "POST", null, "TELEGRAM LOGOUT");
+}
+
+async function mutate(path, method, body, errorLabel) {
   try {
     const options = {
       method,

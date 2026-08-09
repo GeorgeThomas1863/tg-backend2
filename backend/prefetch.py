@@ -87,6 +87,7 @@ def clear_runtime_state() -> None:
     _urgent_empty.set()
     _work_available.clear()
     _block_locks.clear()
+    _failed_keys.clear()
     _logged_oversized_pins.clear()
     reset_prewarm_pass()
 

@@ -121,7 +121,8 @@ button {
 }
 
 .cache-header-btn,
-.cache-pause-btn {
+.cache-pause-btn,
+.telegram-header-btn {
   font: 11.5px var(--font-mono);
   color: var(--green);
   border: 1px solid var(--hairline);
@@ -131,7 +132,8 @@ button {
 }
 
 .cache-header-btn:hover,
-.cache-pause-btn:hover {
+.cache-pause-btn:hover,
+.telegram-header-btn:hover {
   background: var(--hover);
 }
 
@@ -561,6 +563,67 @@ button {
 
 .channel-drawer-input:disabled {
   color: var(--muted);
+}
+
+/*--- Telegram account ---*/
+
+.telegram-auth-account,
+.telegram-auth-form {
+  margin-top: 18px;
+}
+
+.telegram-auth-identity {
+  margin-bottom: 12px;
+  font: 600 13px var(--font-mono);
+}
+
+.telegram-auth-form {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.telegram-auth-form label {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.telegram-auth-action,
+.telegram-login-button {
+  width: fit-content;
+  color: var(--green);
+  font: 11px var(--font-mono);
+}
+
+.telegram-auth-action:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.telegram-password-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.telegram-password-wrapper .channel-drawer-input {
+  flex: 1;
+}
+
+.telegram-password-wrapper button {
+  color: var(--green);
+  font: 10.5px var(--font-mono);
+}
+
+.telegram-logged-out p {
+  margin-bottom: 12px;
+}
+
+.telegram-login-button {
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
 }
 
 /*--- password gate (auth page look from nork-displayer-1950 / resume-builder) ---*/

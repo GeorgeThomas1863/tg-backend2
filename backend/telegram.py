@@ -24,8 +24,31 @@ _msg_cache: dict[tuple[str, int], tuple[object, float]] = {}
 
 
 async def connect() -> None:
-    """Start the client (interactive login on first run, reuses session after)."""
-    await client.start()
+    """Connect without triggering Telethon's interactive login prompts."""
+    await client.connect()
+
+
+async def rebuild_client() -> None:
+    """Replace the unusable client left behind by ``log_out``."""
+    global client
+    client = TelegramClient("session", API_ID, API_HASH)
+    await client.connect()
+
+
+async def is_authorized() -> bool:
+    try:
+        return await client.is_user_authorized()
+    except Exception:
+        report_error("checking authorization")
+        return False
+
+
+async def get_current_user():
+    try:
+        return await client.get_me()
+    except Exception:
+        report_error("loading current user")
+        return None
 
 
 async def disconnect() -> None:
