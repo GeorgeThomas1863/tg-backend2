@@ -7,6 +7,7 @@ import { VideoRow } from "./components/VideoRow";
 import { PasswordGate } from "./components/PasswordGate";
 import { CacheDrawer } from "./components/CacheDrawer";
 import { ChannelDrawer } from "./components/ChannelDrawer";
+import { JumpControls } from "./components/JumpControls";
 import { formatSize } from "./format";
 
 export default function App() {
@@ -49,12 +50,16 @@ export default function App() {
 }
 
 function VideoLibrary({ activeChannel, onOpenChannels, onAuthed }) {
-  const { videos, loading, loadingMore, error, unauthorized, refetch, loadMore } = useVideos();
+  const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos();
   const { status, speedBps, togglePaused, saveSettings, clearCache } = useCacheStatus(!loading && !unauthorized && !error);
   const [expandedId, setExpandedId] = useState(null);
   const [cacheDrawerOpen, setCacheDrawerOpen] = useState(false);
   const sentinelRef = useSentinel(loadMore);
   const toggleRow = (id) => setExpandedId((current) => (current === id ? null : id));
+  const jumpToPosition = (offset) => {
+    setExpandedId(null);
+    jumpTo(offset);
+  };
 
   if (loading) return <div className="page page-status">Loading…</div>;
   if (unauthorized) return <div className="page"><PasswordGate onSuccess={() => { onAuthed(); refetch(); }} /></div>;
@@ -69,8 +74,10 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed }) {
             {activeChannel?.title || "Add a channel"} ▸
           </button>
         </div>
-        <span className="ledger-summary">
+        <div className="ledger-summary">
           {buildLibrarySummary(videos)}
+          {total !== null && <span>{total.toLocaleString()} videos</span>}
+          <JumpControls total={total} disabled={loading} onJump={jumpToPosition} />
           {status && (
             <>
               <button className="cache-header-btn" onClick={() => setCacheDrawerOpen((open) => !open)}>
@@ -81,7 +88,7 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed }) {
               </button>
             </>
           )}
-        </span>
+        </div>
       </header>
       <main>
         {videos.length === 0
@@ -119,6 +126,5 @@ const buildRowList = (videos, expandedId, toggleRow, status) => videos.map((vide
 const buildLibrarySummary = (videos) => {
   let totalBytes = 0;
   for (const video of videos) totalBytes += video.size;
-  const noun = videos.length === 1 ? "item" : "items";
-  return `${videos.length} ${noun} · ${formatSize(totalBytes)}`;
+  return `${videos.length} loaded · ${formatSize(totalBytes)}`;
 };

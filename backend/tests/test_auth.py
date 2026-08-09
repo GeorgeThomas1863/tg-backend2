@@ -32,10 +32,10 @@ def test_login_wrong_password_returns_200_with_success_false(client):
 
 
 def test_login_correct_password_sets_session_cookie(client, monkeypatch):
-    async def fake_list_videos(limit=50, before_id=None):
-        return []
+    async def fake_list_videos(limit=50, before_id=None, offset=0):
+        return [], 0
 
-    monkeypatch.setattr(telegram, "list_videos", fake_list_videos)
+    monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos)
 
     resp = client.post("/api/auth", json={"pw": "test-password"})
     assert resp.status_code == 200

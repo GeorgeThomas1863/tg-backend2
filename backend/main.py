@@ -9,7 +9,7 @@ import logging
 import shutil
 
 import bcrypt
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -303,11 +303,20 @@ def parse_range(range_header: str, file_size: int):
 
 
 @app.get("/api/videos", dependencies=[Depends(require_auth)])
-async def videos(limit: int = 50, before_id: int | None = None):
-    result = await telegram.list_videos(limit, before_id)
+async def videos(
+    limit: int = Query(default=50, ge=0),
+    before_id: int | None = None,
+    offset: int = Query(default=0, ge=0),
+):
+    result = await telegram.list_videos_with_total(
+        limit=limit,
+        before_id=before_id,
+        offset=offset,
+    )
     if result is None:
         raise HTTPException(status_code=502, detail="Telegram request failed")
-    return result
+    video_items, total = result
+    return {"videos": video_items, "total": total}
 
 
 @app.get("/stream/{msg_id}", dependencies=[Depends(require_auth)])

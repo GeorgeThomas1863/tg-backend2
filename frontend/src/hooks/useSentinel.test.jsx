@@ -32,6 +32,12 @@ function Probe({ onVisible }) {
   return <div data-testid="sentinel" ref={ref} />;
 }
 
+function LoadingProbe({ isLoading, onVisible }) {
+  const ref = useSentinel(onVisible);
+  if (isLoading) return <div>Loading…</div>;
+  return <div data-testid="sentinel" ref={ref} />;
+}
+
 describe("useSentinel", () => {
   test("observes the ref'd element and fires onVisible on intersection", () => {
     const onVisible = vi.fn();
@@ -60,6 +66,21 @@ describe("useSentinel", () => {
 
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  test("attaches when the sentinel mounts after the loading state", () => {
+    const onVisible = vi.fn();
+    const { rerender } = render(
+      <LoadingProbe isLoading onVisible={onVisible} />,
+    );
+
+    expect(observed).toBeNull();
+
+    rerender(<LoadingProbe isLoading={false} onVisible={onVisible} />);
+    expect(observed).not.toBeNull();
+
+    trigger(true);
+    expect(onVisible).toHaveBeenCalledTimes(1);
   });
 
   test("disconnects on unmount", () => {

@@ -20,13 +20,14 @@ beforeEach(() => {
 describe("useVideos", () => {
   test("sets videos and loading=false on successful fetch", async () => {
     const videos = [{ id: 1 }, { id: 2 }];
-    fetchVideos.mockResolvedValue(videos);
+    fetchVideos.mockResolvedValue({ videos, total: 2 });
 
     const { result } = renderHook(() => useVideos());
 
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.videos).toEqual(videos);
+    expect(result.current.total).toBe(2);
     expect(result.current.error).toBeNull();
     expect(result.current.unauthorized).toBe(false);
   });
@@ -53,7 +54,7 @@ describe("useVideos", () => {
 
   test("refetch() triggers a new fetch and recovers after a prior error", async () => {
     const videos = [{ id: 3 }];
-    fetchVideos.mockRejectedValueOnce(buildHttpError(500)).mockResolvedValueOnce(videos);
+    fetchVideos.mockRejectedValueOnce(buildHttpError(500)).mockResolvedValueOnce({ videos, total: 1 });
 
     const { result } = renderHook(() => useVideos());
     await waitFor(() => expect(result.current.error).toBe("HTTP 500"));
@@ -76,31 +77,33 @@ function buildPage(startId, count) {
 
 describe("useVideos pagination", () => {
   test("hasMore is true after a full first page, false after a short one", async () => {
-    fetchVideos.mockResolvedValue(buildPage(100, 50));
+    fetchVideos.mockResolvedValue({ videos: buildPage(100, 50), total: null });
     const { result } = renderHook(() => useVideos(50));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.hasMore).toBe(true);
 
-    fetchVideos.mockResolvedValue(buildPage(100, 10));
+    fetchVideos.mockResolvedValue({ videos: buildPage(100, 10), total: null });
     const short = renderHook(() => useVideos(50));
     await waitFor(() => expect(short.result.current.loading).toBe(false));
     expect(short.result.current.hasMore).toBe(false);
   });
 
   test("loadMore fetches with the last id as beforeId and appends", async () => {
-    fetchVideos.mockResolvedValueOnce(buildPage(100, 50)).mockResolvedValueOnce(buildPage(50, 50));
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
+      .mockResolvedValueOnce({ videos: buildPage(50, 50), total: null });
     const { result } = renderHook(() => useVideos(50));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(() => result.current.loadMore());
 
-    expect(fetchVideos).toHaveBeenLastCalledWith(50, 51);
+    expect(fetchVideos).toHaveBeenLastCalledWith({ limit: 50, beforeId: 51 });
     expect(result.current.videos).toHaveLength(100);
     expect(result.current.hasMore).toBe(true);
   });
 
   test("a short page flips hasMore to false and further loadMore calls do not fetch", async () => {
-    fetchVideos.mockResolvedValueOnce(buildPage(100, 50)).mockResolvedValueOnce(buildPage(50, 3));
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
+      .mockResolvedValueOnce({ videos: buildPage(50, 3), total: null });
     const { result } = renderHook(() => useVideos(50));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -114,9 +117,9 @@ describe("useVideos pagination", () => {
   test("overlapping loadMore calls fetch only once", async () => {
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
-    fetchVideos.mockResolvedValueOnce(buildPage(100, 50)).mockImplementationOnce(async () => {
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null }).mockImplementationOnce(async () => {
       await gate;
-      return buildPage(50, 50);
+      return { videos: buildPage(50, 50), total: null };
     });
     const { result } = renderHook(() => useVideos(50));
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -130,12 +133,48 @@ describe("useVideos pagination", () => {
   });
 
   test("loadMore failure with 401 sets unauthorized", async () => {
-    fetchVideos.mockResolvedValueOnce(buildPage(100, 50)).mockRejectedValueOnce(buildHttpError(401));
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
+      .mockRejectedValueOnce(buildHttpError(401));
     const { result } = renderHook(() => useVideos(50));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(() => result.current.loadMore());
 
     expect(result.current.unauthorized).toBe(true);
+  });
+
+  test("jumpTo replaces videos and loadMore resumes with the last id without offset", async () => {
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: 300 })
+      .mockResolvedValueOnce({ videos: buildPage(200, 50), total: 300 })
+      .mockResolvedValueOnce({ videos: buildPage(150, 50), total: 300 });
+    const { result } = renderHook(() => useVideos(50));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() => result.current.jumpTo(100));
+    expect(result.current.videos[0].id).toBe(200);
+    expect(result.current.total).toBe(300);
+
+    await act(() => result.current.loadMore());
+    expect(fetchVideos).toHaveBeenNthCalledWith(2, { limit: 50, offset: 100 });
+    expect(fetchVideos).toHaveBeenNthCalledWith(3, { limit: 50, beforeId: 151 });
+    expect(result.current.videos).toHaveLength(100);
+  });
+
+  test("a stale loadMore response cannot append after a newer jump", async () => {
+    let releaseLoadMore;
+    const stalePage = new Promise((resolve) => { releaseLoadMore = resolve; });
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
+      .mockReturnValueOnce(stalePage)
+      .mockResolvedValueOnce({ videos: buildPage(500, 10), total: 510 });
+    const { result } = renderHook(() => useVideos(50));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let loadMoreRequest;
+    act(() => { loadMoreRequest = result.current.loadMore(); });
+    await act(() => result.current.jumpTo(500));
+    releaseLoadMore({ videos: buildPage(50, 50), total: null });
+    await act(() => loadMoreRequest);
+
+    expect(result.current.videos).toEqual(buildPage(500, 10));
   });
 });

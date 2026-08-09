@@ -43,16 +43,16 @@ describe("fetchVideos", () => {
   });
 
   test("resolves parsed JSON on ok", async () => {
-    const videos = [{ id: 7, name: "clip.mp4" }];
-    fetchMock.mockResolvedValue({ ok: true, json: async () => videos });
+    const response = { videos: [{ id: 7, name: "clip.mp4" }], total: 1 };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
 
-    await expect(fetchVideos()).resolves.toEqual(videos);
+    await expect(fetchVideos()).resolves.toEqual(response);
   });
 
   test("sends credentials: 'include' so the session cookie rides along", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
 
-    await fetchVideos(5);
+    await fetchVideos({ limit: 5 });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, options] = fetchMock.mock.calls[0];
@@ -63,11 +63,19 @@ describe("fetchVideos", () => {
   test("appends before_id only when provided", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
 
-    await fetchVideos(50, 999);
-    await fetchVideos(50);
+    await fetchVideos({ limit: 50, beforeId: 999 });
+    await fetchVideos({ limit: 50 });
 
     expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=50&before_id=999`);
     expect(fetchMock.mock.calls[1][0]).toBe(`${BASE}/api/videos?limit=50`);
+  });
+
+  test("appends offset only when provided", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ videos: [], total: 0 }) });
+
+    await fetchVideos({ limit: 25, offset: 100 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=25&offset=100`);
   });
 });
 

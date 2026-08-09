@@ -156,39 +156,40 @@ async def test_activate_channel_restarts_worker_after_exception(monkeypatch, fai
 # --- GET /api/videos ---
 
 
-def test_videos_returns_the_list_from_telegram(authed_client, monkeypatch):
+def test_videos_returns_envelope_from_telegram(authed_client, monkeypatch):
     videos = [{"id": 7, "name": "a.mp4", "size": 123}]
 
-    async def fake_list_videos(limit=50, before_id=None):
-        return videos
+    async def fake_list_videos_with_total(limit=50, before_id=None, offset=0):
+        return videos, 19
 
-    monkeypatch.setattr(telegram, "list_videos", fake_list_videos)
+    monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos_with_total)
     resp = authed_client.get("/api/videos")
     assert resp.status_code == 200
-    assert resp.json() == videos
+    assert resp.json() == {"videos": videos, "total": 19}
 
 
 def test_videos_returns_502_when_telegram_fails(authed_client, monkeypatch):
-    async def fake_list_videos(limit=50, before_id=None):
+    async def fake_list_videos(limit=50, before_id=None, offset=0):
         return None
 
-    monkeypatch.setattr(telegram, "list_videos", fake_list_videos)
+    monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos)
     assert authed_client.get("/api/videos").status_code == 502
 
 
 def test_videos_passes_before_id_through(authed_client, monkeypatch):
     seen = {}
 
-    async def fake_list_videos(limit=50, before_id=None):
+    async def fake_list_videos(limit=50, before_id=None, offset=0):
         seen["limit"] = limit
         seen["before_id"] = before_id
-        return []
+        seen["offset"] = offset
+        return [], 0
 
-    monkeypatch.setattr(telegram, "list_videos", fake_list_videos)
-    resp = authed_client.get("/api/videos?limit=25&before_id=1234")
+    monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos)
+    resp = authed_client.get("/api/videos?limit=25&before_id=1234&offset=8")
 
     assert resp.status_code == 200
-    assert seen == {"limit": 25, "before_id": 1234}
+    assert seen == {"limit": 25, "before_id": 1234, "offset": 8}
 
 
 # --- GET /stream/{msg_id} ---

@@ -64,6 +64,8 @@ button {
   align-items: baseline;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--hairline);
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .ledger-header h1 {
@@ -90,6 +92,32 @@ button {
 .ledger-summary {
   color: var(--muted);
   font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.jump-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: 11.5px var(--font-mono);
+}
+
+.jump-controls-input {
+  width: 72px;
+  padding: 4px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--paper);
+  font: inherit;
+}
+
+.jump-controls-button {
+  color: var(--green);
+  font: inherit;
 }
 
 .cache-header-btn,

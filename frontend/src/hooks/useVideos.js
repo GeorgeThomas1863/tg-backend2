@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchVideos } from "../api/client";
 
-// Fetches the video list with cursor pagination and exposes
-// loading/error/auth state. A 401 surfaces as `unauthorized` (the password
-// gate), not as an error. `refetch` restarts from the first page (called
-// after login). `loadMore` appends the next page; `hasMore` is false once a
-// page comes back short.
 export function useVideos(limit = 50) {
   const [videos, setVideos] = useState([]);
+  const [total, setTotal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -15,53 +11,103 @@ export function useVideos(limit = 50) {
   const [unauthorized, setUnauthorized] = useState(false);
   const [fetchCount, setFetchCount] = useState(0);
   const loadingMoreRef = useRef(false);
+  const requestGeneration = useRef(0);
+  const startOffset = useRef(0);
 
   useEffect(() => {
-    let cancelled = false;
+    const generation = ++requestGeneration.current;
+    startOffset.current = 0;
+    loadingMoreRef.current = false;
     setLoading(true);
     setError(null);
     setUnauthorized(false);
 
-    fetchVideos(limit)
+    fetchVideos({ limit })
       .then((data) => {
-        if (cancelled) return;
-        setVideos(data);
-        setHasMore(data.length === limit);
+        if (generation !== requestGeneration.current) return;
+        setVideos(data.videos);
+        setTotal(data.total);
+        setHasMore(calculateHasMore(0, data.videos.length, data.total, limit));
         setLoading(false);
       })
-      .catch((err) => {
-        if (cancelled) return;
-        if (err.status === 401) setUnauthorized(true);
-        else setError(err.message);
+      .catch((requestError) => {
+        if (generation !== requestGeneration.current) return;
+        applyRequestError(requestError, setUnauthorized, setError);
         setLoading(false);
       });
 
     return () => {
-      cancelled = true;
+      if (generation === requestGeneration.current) requestGeneration.current += 1;
     };
   }, [limit, fetchCount]);
 
-  const refetch = () => setFetchCount((count) => count + 1);
+  const refetch = () => {
+    requestGeneration.current += 1;
+    setFetchCount((count) => count + 1);
+  };
+
+  const jumpTo = async (offset) => {
+    if (!Number.isInteger(offset) || offset < 0) return;
+
+    const generation = ++requestGeneration.current;
+    startOffset.current = offset;
+    loadingMoreRef.current = false;
+    setVideos([]);
+    setLoading(true);
+    setLoadingMore(false);
+    setHasMore(false);
+    setError(null);
+    setUnauthorized(false);
+
+    try {
+      const data = await fetchVideos({ limit, offset });
+      if (generation !== requestGeneration.current) return;
+      setVideos(data.videos);
+      setTotal(data.total);
+      setHasMore(calculateHasMore(offset, data.videos.length, data.total, limit));
+    } catch (requestError) {
+      if (generation !== requestGeneration.current) return;
+      applyRequestError(requestError, setUnauthorized, setError);
+    } finally {
+      if (generation === requestGeneration.current) setLoading(false);
+    }
+  };
 
   const loadMore = async () => {
     if (loading || loadingMoreRef.current || !hasMore || videos.length === 0) return;
 
+    const generation = ++requestGeneration.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const lastId = videos[videos.length - 1].id;
 
     try {
-      const page = await fetchVideos(limit, lastId);
-      setVideos((current) => [...current, ...page]);
-      setHasMore(page.length === limit);
-    } catch (err) {
-      if (err.status === 401) setUnauthorized(true);
-      else setError(err.message);
+      const data = await fetchVideos({ limit, beforeId: lastId });
+      if (generation !== requestGeneration.current) return;
+      const loadedCount = videos.length + data.videos.length;
+      setVideos((current) => [...current, ...data.videos]);
+      setTotal(data.total);
+      setHasMore(calculateHasMore(startOffset.current, loadedCount, data.total, limit, data.videos.length));
+    } catch (requestError) {
+      if (generation !== requestGeneration.current) return;
+      applyRequestError(requestError, setUnauthorized, setError);
+    } finally {
+      if (generation === requestGeneration.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
-
-    loadingMoreRef.current = false;
-    setLoadingMore(false);
   };
 
-  return { videos, loading, loadingMore, hasMore, error, unauthorized, refetch, loadMore };
+  return { videos, total, loading, loadingMore, hasMore, error, unauthorized, refetch, jumpTo, loadMore };
+}
+
+function calculateHasMore(offset, loadedCount, total, limit, pageCount = loadedCount) {
+  if (typeof total === "number") return offset + loadedCount < total;
+  return pageCount === limit;
+}
+
+function applyRequestError(error, setUnauthorized, setError) {
+  if (error.status === 401) setUnauthorized(true);
+  else setError(error.message);
 }

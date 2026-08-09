@@ -47,19 +47,48 @@ def media_to_dict(msg) -> dict:
     }
 
 
-async def list_videos(limit: int = 50, before_id: int | None = None) -> Optional[list[dict]]:
+async def list_videos(
+    limit: int = 50,
+    before_id: int | None = None,
+    offset: int = 0,
+) -> Optional[list[dict]]:
+    result = await _fetch_videos(limit, before_id, offset)
+    if result is None:
+        return None
+    videos, _ = result
+    return videos
+
+
+async def list_videos_with_total(
+    limit: int = 50,
+    before_id: int | None = None,
+    offset: int = 0,
+) -> Optional[tuple[list[dict], int | None]]:
+    return await _fetch_videos(limit, before_id, offset)
+
+
+async def _fetch_videos(
+    limit: int,
+    before_id: int | None,
+    offset: int,
+) -> Optional[tuple[list[dict], int | None]]:
     channel = channels.get_active()
     if channel is None:
-        return []
+        return [], None
     try:
         msgs = await client.get_messages(
             channel, limit=limit, offset_id=before_id or 0,
+            add_offset=offset,
             filter=InputMessagesFilterVideo,
         )
     except Exception:
         report_error(f"listing videos from {channel!r}")
         return None
-    return [media_to_dict(m) for m in msgs if m.file]
+    videos = [media_to_dict(m) for m in msgs if m.file]
+    total = getattr(msgs, "total", None)
+    if not isinstance(total, int):
+        total = None
+    return videos, total
 
 
 async def get_message(msg_id: int, channel_key: str | None = None):

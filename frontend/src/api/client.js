@@ -5,9 +5,11 @@
 
 const BASE = import.meta.env.VITE_API_BASE;
 
-export async function fetchVideos(limit = 50, beforeId = null) {
-  const beforeParam = beforeId ? `&before_id=${beforeId}` : "";
-  const res = await fetch(`${BASE}/api/videos?limit=${limit}${beforeParam}`, { credentials: "include" });
+export async function fetchVideos({ limit = 50, beforeId = null, offset = null } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (beforeId !== null) params.set("before_id", String(beforeId));
+  if (offset !== null) params.set("offset", String(offset));
+  const res = await fetch(`${BASE}/api/videos?${params}`, { credentials: "include" });
   if (!res.ok) {
     const error = new Error(`HTTP ${res.status}`);
     error.status = res.status;
