@@ -8,12 +8,18 @@ __pycache__/
 *.pyc
 .venv/
 
+# uv test-run lock artifacts
+backend/.test-tmp/
+
 # Video block + thumbnail cache — bulk data, never commit
 backend/cache/
 
 todo.txt
 
 docs/
+
+# Local scratch — playgrounds and one-off dev experiments
+playgrounds/
 
 # Secrets — ignore every .env variant, but keep the committed template
 .env*
@@ -31,10 +37,14 @@ npm-debug.log*
 .idea/
 .DS_Store
 
-# Claude Code — local scratch/screenshots and per-machine settings
+# Claude Code — local scratch/screenshots, dev check scripts, per-machine settings
 .claude/.tmp/
 .claude/.pics/
+.claude/checks/
 .claude/settings.local.json
+
+# Codex CLI per-project config — contains the Mongo connection string
+.codex/
 
 # Session history (already self-ignored via .remember/.gitignore; explicit here too)
 .remember/

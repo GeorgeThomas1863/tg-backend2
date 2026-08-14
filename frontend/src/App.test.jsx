@@ -7,6 +7,7 @@ import { useVideos } from "./hooks/useVideos";
 vi.mock("./hooks/useTelegramAuth", () => ({ useTelegramAuth: vi.fn() }));
 vi.mock("./hooks/useChannels", () => ({ useChannels: () => ({ channels: [{ id: "1" }], active: { id: "1", title: "Clips" }, loading: false, busy: false, error: null, refresh: vi.fn(), activate: vi.fn() }) }));
 vi.mock("./hooks/useVideos", () => ({ useVideos: vi.fn() }));
+vi.mock("./hooks/useCategories", () => ({ useCategories: () => ({ categories: [], channel: null, loading: false }) }));
 vi.mock("./hooks/useCacheStatus", () => ({ useCacheStatus: () => ({ status: null }) }));
 vi.mock("./hooks/useSentinel", () => ({ useSentinel: () => vi.fn() }));
 vi.mock("./components/PasswordGate", () => ({ PasswordGate: () => <div>Site password gate</div> }));

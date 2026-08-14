@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchVideos } from "../api/client";
 
-export function useVideos(limit = 50) {
+export function useVideos(limit = 50, category = null) {
   const [videos, setVideos] = useState([]);
   const [total, setTotal] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -22,7 +22,12 @@ export function useVideos(limit = 50) {
     setError(null);
     setUnauthorized(false);
 
-    fetchVideos({ limit })
+    setVideos([]);
+    setTotal(null);
+    setHasMore(false);
+    setLoadingMore(false);
+
+    fetchVideos(buildVideoQuery(limit, category))
       .then((data) => {
         if (generation !== requestGeneration.current) return;
         setVideos(data.videos);
@@ -39,7 +44,7 @@ export function useVideos(limit = 50) {
     return () => {
       if (generation === requestGeneration.current) requestGeneration.current += 1;
     };
-  }, [limit, fetchCount]);
+  }, [limit, category, fetchCount]);
 
   const refetch = () => {
     requestGeneration.current += 1;
@@ -60,7 +65,7 @@ export function useVideos(limit = 50) {
     setUnauthorized(false);
 
     try {
-      const data = await fetchVideos({ limit, offset });
+      const data = await fetchVideos(buildVideoQuery(limit, category, { offset }));
       if (generation !== requestGeneration.current) return;
       setVideos(data.videos);
       setTotal(data.total);
@@ -82,7 +87,7 @@ export function useVideos(limit = 50) {
     const lastId = videos[videos.length - 1].id;
 
     try {
-      const data = await fetchVideos({ limit, beforeId: lastId });
+      const data = await fetchVideos(buildVideoQuery(limit, category, { beforeId: lastId }));
       if (generation !== requestGeneration.current) return;
       const loadedCount = videos.length + data.videos.length;
       setVideos((current) => [...current, ...data.videos]);
@@ -100,6 +105,12 @@ export function useVideos(limit = 50) {
   };
 
   return { videos, total, loading, loadingMore, hasMore, error, unauthorized, refetch, jumpTo, loadMore };
+}
+
+function buildVideoQuery(limit, category, cursor = {}) {
+  const query = { limit, ...cursor };
+  if (category) query.category = category;
+  return query;
 }
 
 function calculateHasMore(offset, loadedCount, total, limit, pageCount = loadedCount) {

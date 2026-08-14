@@ -76,6 +76,8 @@ if PREWARM_RESCAN_SECONDS <= 0:
 
 BLOCK_SIZE = 4 * 1024 * 1024   # cache unit; multiple of ALIGN and REQUEST_SIZE
 MSG_CACHE_TTL = 300            # seconds a resolved message stays fresh
+CATEGORY_COUNT_TTL = 300       # seconds category counts stay fresh
+CATEGORY_COUNT_RETRY_TTL = 30  # seconds before retrying a failed count load
 
 # Dev server ports; the frontend reads the same .env keys in vite.config.js.
 BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "8000"))

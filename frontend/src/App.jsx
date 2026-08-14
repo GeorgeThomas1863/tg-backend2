@@ -4,12 +4,14 @@ import { useSentinel } from "./hooks/useSentinel";
 import { useCacheStatus } from "./hooks/useCacheStatus";
 import { useChannels } from "./hooks/useChannels";
 import { useTelegramAuth } from "./hooks/useTelegramAuth";
+import { useCategories } from "./hooks/useCategories";
 import { VideoRow } from "./components/VideoRow";
 import { PasswordGate } from "./components/PasswordGate";
 import { CacheDrawer } from "./components/CacheDrawer";
 import { ChannelDrawer } from "./components/ChannelDrawer";
 import { JumpControls } from "./components/JumpControls";
 import { TelegramAuthDrawer } from "./components/TelegramAuthDrawer";
+import { CategoryBar } from "./components/CategoryBar";
 import { formatSize } from "./format";
 
 export default function App() {
@@ -85,7 +87,10 @@ export default function App() {
 }
 
 function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, onOpenTelegram }) {
-  const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos();
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const categoryData = useCategories();
+  const selectedCategoryData = findCategory(categoryData.categories, selectedCategory);
+  const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos(50, selectedCategory);
   const { status, speedBps, togglePaused, saveSettings, clearCache } = useCacheStatus(!loading && !unauthorized && !error);
   const [expandedId, setExpandedId] = useState(null);
   const [cacheDrawerOpen, setCacheDrawerOpen] = useState(false);
@@ -105,6 +110,11 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
       <header className="ledger-header">
         <div className="ledger-heading">
           <h1>Videos</h1>
+          {selectedCategoryData && (
+            <span className="ledger-category-summary">
+              {selectedCategoryData.name} · {selectedCategoryData.count.toLocaleString()} videos
+            </span>
+          )}
           <button className="channel-header-btn" onClick={onOpenChannels}>
             {activeChannel?.title || "Add a channel"} ▸
           </button>
@@ -126,7 +136,13 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
           <TelegramTrigger label={telegramLabel} onClick={onOpenTelegram} />
         </div>
       </header>
-      <main>
+      <CategoryBar
+        categories={categoryData.categories}
+        loading={categoryData.loading}
+        selectedKey={selectedCategory}
+        onSelect={setSelectedCategory}
+      />
+      <main key={selectedCategory || "all-videos"}>
         {videos.length === 0
           ? <div className="page-status">No videos found.</div>
           : buildRowList(videos, expandedId, toggleRow, status)}
@@ -188,3 +204,14 @@ const buildLibrarySummary = (videos) => {
   for (const video of videos) totalBytes += video.size;
   return `${videos.length} loaded · ${formatSize(totalBytes)}`;
 };
+
+function findCategory(categories, selectedKey) {
+  if (!selectedKey) return null;
+  for (const category of categories) {
+    if (category.key === selectedKey) return category;
+    for (const sub of category.subs || []) {
+      if (sub.key === selectedKey) return sub;
+    }
+  }
+  return null;
+}

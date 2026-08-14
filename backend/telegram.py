@@ -74,8 +74,12 @@ async def list_videos(
     limit: int = 50,
     before_id: int | None = None,
     offset: int = 0,
+    cat_start: int | None = None,
+    cat_end: int | None = None,
 ) -> Optional[list[dict]]:
-    result = await _fetch_videos(limit, before_id, offset)
+    result = await _fetch_videos(
+        limit, before_id, offset, cat_start, cat_end
+    )
     if result is None:
         return None
     videos, _ = result
@@ -86,24 +90,43 @@ async def list_videos_with_total(
     limit: int = 50,
     before_id: int | None = None,
     offset: int = 0,
+    cat_start: int | None = None,
+    cat_end: int | None = None,
 ) -> Optional[tuple[list[dict], int | None]]:
-    return await _fetch_videos(limit, before_id, offset)
+    return await _fetch_videos(
+        limit, before_id, offset, cat_start, cat_end
+    )
 
 
 async def _fetch_videos(
     limit: int,
     before_id: int | None,
     offset: int,
+    cat_start: int | None = None,
+    cat_end: int | None = None,
 ) -> Optional[tuple[list[dict], int | None]]:
     channel = channels.get_active()
     if channel is None:
         return [], None
     try:
-        msgs = await client.get_messages(
-            channel, limit=limit, offset_id=before_id or 0,
-            add_offset=offset,
-            filter=InputMessagesFilterVideo,
-        )
+        if cat_start is None or cat_end is None:
+            msgs = await client.get_messages(
+                channel, limit=limit, offset_id=before_id or 0,
+                add_offset=offset,
+                filter=InputMessagesFilterVideo,
+            )
+        else:
+            offset_id = (
+                before_id
+                if before_id and before_id <= cat_end
+                else cat_end
+            )
+            msgs = await client.get_messages(
+                channel, limit=limit, offset_id=offset_id,
+                add_offset=offset,
+                filter=InputMessagesFilterVideo,
+                min_id=cat_start,
+            )
     except Exception:
         report_error(f"listing videos from {channel!r}")
         return None

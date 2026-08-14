@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 import cache
+import categories
 import channels
 import db
 import downloader
@@ -335,6 +336,19 @@ async def wipe_channel_cache(channel_key: str | None) -> None:
 # --- videos ---
 
 
+@app.get("/api/categories", dependencies=[Depends(require_auth)])
+async def get_categories():
+    channel_key = channels.active_key()
+    if channel_key != categories.STUFF_CHANNEL:
+        return {
+            "channel": channel_key,
+            "counts_exact": True,
+            "categories": [],
+        }
+    category_data = await categories.get_categories()
+    return {"channel": channel_key, **category_data}
+
+
 def parse_range(range_header: str, file_size: int):
     """
     Parse a single-range 'bytes=START-END' header.
@@ -371,16 +385,55 @@ async def videos(
     limit: int = Query(default=50, ge=0),
     before_id: int | None = None,
     offset: int = Query(default=0, ge=0),
+    category: str | None = None,
 ):
-    result = await telegram.list_videos_with_total(
-        limit=limit,
-        before_id=before_id,
-        offset=offset,
-    )
+    category_bounds = _resolve_category(category)
+    if category_bounds is None:
+        result = await telegram.list_videos_with_total(
+            limit=limit,
+            before_id=before_id,
+            offset=offset,
+        )
+    else:
+        cat_start, cat_end = category_bounds
+        result = await telegram.list_videos_with_total(
+            limit=limit,
+            before_id=before_id,
+            offset=offset,
+            cat_start=cat_start,
+            cat_end=cat_end,
+        )
     if result is None:
         raise HTTPException(status_code=502, detail="Telegram request failed")
     video_items, total = result
+    if category is not None:
+        total = await _get_category_count(category)
     return {"videos": video_items, "total": total}
+
+
+def _resolve_category(category: str | None) -> tuple[int, int] | None:
+    if category is None:
+        return None
+    bounds = categories.resolve(category)
+    if bounds is None:
+        raise HTTPException(status_code=404, detail="unknown category")
+    if channels.active_key() != categories.STUFF_CHANNEL:
+        raise HTTPException(
+            status_code=400,
+            detail="categories unavailable for this channel",
+        )
+    return bounds
+
+
+async def _get_category_count(category_key: str) -> int:
+    category_data = await categories.get_categories()
+    for category in category_data["categories"]:
+        if category["key"] == category_key:
+            return category["count"]
+        for sub in category["subs"]:
+            if sub["key"] == category_key:
+                return sub["count"]
+    raise HTTPException(status_code=404, detail="unknown category")
 
 
 @app.get("/stream/{msg_id}", dependencies=[Depends(require_auth)])
