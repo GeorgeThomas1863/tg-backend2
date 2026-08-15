@@ -11,6 +11,7 @@ import traceback
 from typing import AsyncGenerator, Optional
 
 from telethon import TelegramClient
+from telethon.errors import ChannelInvalidError
 from telethon.tl.types import InputMessagesFilterVideo
 
 import channels
@@ -21,6 +22,9 @@ from config import API_ID, API_HASH, ALIGN, MSG_CACHE_TTL, REQUEST_SIZE
 client = TelegramClient("session", API_ID, API_HASH)
 
 _msg_cache: dict[tuple[str, int], tuple[object, float]] = {}
+
+_last_entity_warm: float | None = None
+ENTITY_WARM_COOLDOWN = 60  # seconds between get_dialogs cache-refill sweeps
 
 
 async def connect() -> None:
@@ -110,23 +114,23 @@ async def _fetch_videos(
         return [], None
     try:
         if cat_start is None or cat_end is None:
-            msgs = await client.get_messages(
+            msgs = await with_entity_warm(lambda: client.get_messages(
                 channel, limit=limit, offset_id=before_id or 0,
                 add_offset=offset,
                 filter=InputMessagesFilterVideo,
-            )
+            ))
         else:
             offset_id = (
                 before_id
                 if before_id and before_id <= cat_end
                 else cat_end
             )
-            msgs = await client.get_messages(
+            msgs = await with_entity_warm(lambda: client.get_messages(
                 channel, limit=limit, offset_id=offset_id,
                 add_offset=offset,
                 filter=InputMessagesFilterVideo,
                 min_id=cat_start,
-            )
+            ))
     except Exception:
         report_error(f"listing videos from {channel!r}")
         return None
@@ -135,6 +139,37 @@ async def _fetch_videos(
     if not isinstance(total, int):
         total = None
     return videos, total
+
+
+async def with_entity_warm(run):
+    """Run a channel request, retrying once after refilling the entity cache.
+
+    A Telegram logout/login rebuilds the session file, which loses the
+    entity cache mapping bare -100... channel IDs to access hashes; requests
+    then fail with ChannelInvalidError (or ValueError from resolution). One
+    get_dialogs sweep restores the cache for every channel the account is in.
+    """
+    try:
+        return await run()
+    except (ValueError, ChannelInvalidError):
+        if not await warm_entity_cache():
+            raise
+        return await run()
+
+
+async def warm_entity_cache() -> bool:
+    """Refill the session entity cache via get_dialogs; False if on cooldown."""
+    global _last_entity_warm
+    now = time.monotonic()
+    if _last_entity_warm is not None and now - _last_entity_warm < ENTITY_WARM_COOLDOWN:
+        return False
+    _last_entity_warm = now
+    try:
+        await client.get_dialogs()
+    except Exception:
+        report_error("warming the entity cache")
+        return False
+    return True
 
 
 async def get_message(msg_id: int, channel_key: str | None = None):
@@ -148,7 +183,7 @@ async def get_message(msg_id: int, channel_key: str | None = None):
         return cached
 
     try:
-        msg = await client.get_messages(channel, ids=msg_id)
+        msg = await with_entity_warm(lambda: client.get_messages(channel, ids=msg_id))
     except Exception:
         report_error(f"fetching message {msg_id} from {channel!r}")
         return None
