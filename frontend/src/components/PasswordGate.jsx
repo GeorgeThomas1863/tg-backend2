@@ -8,7 +8,7 @@ import flagUrl from "../assets/freedom1.jpg";
 // nork-displayer-1950 / resume-builder: flag background, white card,
 // eye-toggled password input, uppercase submit.
 export function PasswordGate({ onSuccess }) {
-  const [pw, setPw] = useState("");
+  const [pw, setPw] = useState("pavel");
   const [showPw, setShowPw] = useState(false);
   const [message, setMessage] = useState(null);
   const [submitting, setSubmitting] = useState(false);

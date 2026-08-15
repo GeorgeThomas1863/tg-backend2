@@ -48,10 +48,17 @@ describe("PasswordGate", () => {
     const onSuccess = vi.fn();
     render(<PasswordGate onSuccess={onSuccess} />);
 
+    typePassword("");
     submitForm();
 
     // Flush any pending microtasks before asserting nothing happened.
     await waitFor(() => expect(postLogin).not.toHaveBeenCalled());
     expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  test("prefills the password input with the default site password", () => {
+    render(<PasswordGate onSuccess={() => {}} />);
+
+    expect(screen.getByLabelText("Enter the site password")).toHaveValue("pavel");
   });
 });

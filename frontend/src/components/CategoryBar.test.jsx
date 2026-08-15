@@ -69,6 +69,8 @@ describe("CategoryBar", () => {
     expect(rows[1]).toHaveTextContent("Kink");
     expect(rows[1]).toHaveTextContent("5,390");
     expect(rows[1]).toHaveTextContent("10140–16680");
+    expect(rows[1].textContent.startsWith("10140–16680")).toBe(true);
+    expect(rows[1].textContent.endsWith("5,390")).toBe(true);
     expect(rows[2]).toHaveTextContent("Hogtied");
     expect(rows[2]).toHaveTextContent("980");
     expect(rows[2]).toHaveTextContent("13445–14430");

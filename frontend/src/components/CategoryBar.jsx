@@ -104,9 +104,9 @@ function CategoryRow({ item, isMajor = false, isNested = false, onSelect }) {
 
   return (
     <button type="button" role="option" aria-selected="false" className={classes.join(" ")} onClick={() => onSelect(item.key)}>
+      {item.start !== undefined && <span className="category-row-range">{item.start}–{item.end}</span>}
       <span className="category-row-name">{item.name}</span>
       {typeof item.count === "number" && <span className="category-row-count">{item.count.toLocaleString()}</span>}
-      {item.start !== undefined && <span className="category-row-range">{item.start}–{item.end}</span>}
     </button>
   );
 }
@@ -180,7 +180,7 @@ const CATEGORY_STYLES = `
   .category-combo-button:hover { border-color: var(--muted); }
   .category-dropdown { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(420px, calc(100vw - 48px)); max-height: 390px; overflow: auto; padding: 8px; background: var(--paper); border: 1px solid var(--muted); box-shadow: 0 14px 32px #20212422; }
   .category-search { width: 100%; margin-bottom: 7px; padding: 7px 8px; color: var(--ink); background: var(--paper); border: 1px solid var(--hairline); font: inherit; }
-  .category-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; width: 100%; padding: 7px 8px 7px 24px; text-align: left; }
+  .category-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; width: 100%; padding: 7px 8px 7px 24px; text-align: left; }
   .category-row:hover { background: var(--hover); }
   .category-row-major { padding-left: 8px; font-weight: 600; }
   .category-row-nested { padding-left: 40px; }

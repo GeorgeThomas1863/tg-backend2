@@ -301,13 +301,13 @@ button {
 .cache-drawer {
   position: fixed;
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
-  width: 264px;
+  width: min(400px, 100vw);
   padding: 20px 18px;
   background: var(--paper);
-  border-left: 1px solid var(--hairline);
-  box-shadow: -12px 0 28px rgba(32,33,36,0.08);
+  border-right: 1px solid var(--hairline);
+  box-shadow: 12px 0 28px rgba(32,33,36,0.08);
   overflow-y: auto;
   z-index: 10;
 }
@@ -444,13 +444,13 @@ button {
 .channel-drawer {
   position: fixed;
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
-  width: 320px;
+  width: min(480px, 100vw);
   padding: 20px 18px;
   background: var(--paper);
-  border-left: 1px solid var(--hairline);
-  box-shadow: -12px 0 28px rgba(32,33,36,0.08);
+  border-right: 1px solid var(--hairline);
+  box-shadow: 12px 0 28px rgba(32,33,36,0.08);
   overflow-y: auto;
   z-index: 10;
 }
