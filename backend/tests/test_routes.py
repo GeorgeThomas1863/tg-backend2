@@ -304,7 +304,7 @@ def install_get_thumbnail(monkeypatch, data):
 
 
 def install_fake_stream_range(monkeypatch):
-    async def fake_stream_range(channel_key, msg, start, end):
+    async def fake_stream_range(channel_key, msg, start, end, preview=False):
         yield DATA[start:end + 1]
 
     monkeypatch.setattr(streaming, "stream_range", fake_stream_range)

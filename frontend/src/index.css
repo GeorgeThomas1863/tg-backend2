@@ -172,6 +172,11 @@ button {
   background: #e7e7e4;
 }
 
+video.row-thumb {
+  object-fit: cover;
+  background: #000;
+}
+
 .row-title {
   font-weight: 600;
   font-size: 13.5px;

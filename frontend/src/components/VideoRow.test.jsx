@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { VideoRow } from "./VideoRow";
 
 // No api-client mock: streamUrl/thumbUrl read the VITE_API_BASE pinned in
@@ -88,5 +88,47 @@ describe("VideoRow", () => {
     expect(getByText("cached").className).toBe("cache-strip-label");
     expect(container.querySelector(".cache-strip-fill").style.width).toBe("100%");
     expect(container.querySelector(".cache-strip-fill").classList.contains("downloading")).toBe(false);
+  });
+
+  // NOTE: React synthesizes onMouseEnter/onMouseLeave from mouseover/mouseout,
+  // so fire mouseOver/mouseOut here. If the handler does not trigger, swap to
+  // fireEvent.mouseEnter/mouseLeave — one of the two fires it under jsdom.
+  test("hovering the header for 300ms swaps the thumb for a muted preview stream", () => {
+    vi.useFakeTimers();
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    fireEvent.mouseOver(container.querySelector(".row-header"));
+    act(() => vi.advanceTimersByTime(300));
+
+    const preview = container.querySelector("video.row-thumb");
+    expect(preview).not.toBeNull();
+    expect(preview.getAttribute("src")).toBe("http://test-api/stream/7?preview=1#t=188");
+    expect(preview.muted).toBe(true);
+    expect(container.querySelector("img.row-thumb")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  test("unhovering tears the preview down and restores the img", () => {
+    vi.useFakeTimers();
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    fireEvent.mouseOver(container.querySelector(".row-header"));
+    act(() => vi.advanceTimersByTime(300));
+    fireEvent.mouseOut(container.querySelector(".row-header"));
+
+    expect(container.querySelector("video.row-thumb")).toBeNull();
+    expect(container.querySelector("img.row-thumb")).not.toBeNull();
+    vi.useRealTimers();
+  });
+
+  test("expanded row never shows a hover preview (real player owns the stream)", () => {
+    vi.useFakeTimers();
+    const { container } = render(<VideoRow video={video} isExpanded={true} onToggle={vi.fn()} />);
+
+    fireEvent.mouseOver(container.querySelector(".row-header"));
+    act(() => vi.advanceTimersByTime(1000));
+
+    expect(container.querySelector("video.row-thumb")).toBeNull();
+    vi.useRealTimers();
   });
 });

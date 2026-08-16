@@ -15,6 +15,7 @@ import {
   postTelegramPassword,
   postTelegramPhone,
   postVisibleVideos,
+  previewStreamUrl,
   removeChannel,
   setDefaultChannel,
   streamUrl,
@@ -407,5 +408,9 @@ describe("URL builders", () => {
 
   test("thumbUrl builds <BASE>/thumb/<id> against the pinned VITE_API_BASE", () => {
     expect(thumbUrl(42)).toBe(`${BASE}/thumb/42`);
+  });
+
+  test("previewStreamUrl builds a preview-flagged URL with a start offset", () => {
+    expect(previewStreamUrl(7, 188)).toBe("http://test-api/stream/7?preview=1#t=188");
   });
 });

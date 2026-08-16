@@ -55,6 +55,21 @@ async def test_stream_notes_each_served_block(tmp_path, monkeypatch):
     assert notes == [(1, 0), (1, 1)]
 
 
+async def test_preview_stream_does_not_note_playhead(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    notes = []
+    monkeypatch.setattr(
+        prefetch,
+        "note_playhead",
+        lambda channel_key, msg_id, idx: notes.append((msg_id, idx)),
+    )
+
+    out = await drain(streaming.stream_range("test", make_msg(), 100, BLOCK_SIZE + 50, preview=True))
+
+    assert out == BUFFER[100:BLOCK_SIZE + 51]  # bytes identical to a normal stream
+    assert notes == []                          # but the pin never moves
+
+
 async def test_download_failure_falls_back_to_direct_stream(tmp_path, monkeypatch):
     install_world(tmp_path, monkeypatch, failing=True)
     fallback_calls = install_fake_direct_stream(monkeypatch)

@@ -1,5 +1,6 @@
-import { thumbUrl } from "../api/client";
+import { previewStreamUrl, thumbUrl } from "../api/client";
 import { VideoPlayer } from "./VideoPlayer";
+import { useHoverPreview } from "../hooks/useHoverPreview";
 import { formatDate, formatDuration, formatSize } from "../format";
 
 // One ledger row: a clickable header line (thumb, title, mono metadata
@@ -19,11 +20,30 @@ export function VideoRow({
   const pct = video.size > 0 ? Math.min(100, Math.round((cachedBytes / video.size) * 100)) : 0;
   const fillClass = isDownloading && !paused && pct < 100 ? "cache-strip-fill downloading" : "cache-strip-fill";
   const label = buildCacheLabel(pct, isDownloading, paused);
+  const { previewing, onMouseEnter, onMouseLeave } = useHoverPreview(isExpanded);
 
   return (
     <div className="video-row" ref={rowRef}>
-      <button className="row-header" aria-expanded={isExpanded} onClick={() => onToggle(video.id)}>
-        <img className="row-thumb" src={thumbUrl(video.id)} alt="" loading="lazy" />
+      <button
+        className="row-header"
+        aria-expanded={isExpanded}
+        onClick={() => onToggle(video.id)}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        {previewing ? (
+          <video
+            className="row-thumb"
+            src={previewStreamUrl(video.id, buildPreviewStart(video.duration))}
+            poster={thumbUrl(video.id)}
+            muted
+            autoPlay
+            loop
+            playsInline
+          />
+        ) : (
+          <img className="row-thumb" src={thumbUrl(video.id)} alt="" loading="lazy" />
+        )}
         <span className="row-title">{video.name}</span>
         <span className="row-col row-col-wide">{formatDate(video.date)}</span>
         <span className="row-col">{formatDuration(video.duration)}</span>
@@ -55,4 +75,9 @@ function buildCacheLabel(pct, isDownloading, paused) {
   if (isDownloading) return `${pct}% ↓`;
   if (pct === 0) return "—";
   return `${pct}%`;
+}
+
+function buildPreviewStart(duration) {
+  if (!duration || duration <= 0) return 0;
+  return Math.floor(duration * 0.25);
 }

@@ -455,7 +455,7 @@ async def _get_category_count(category_key: str) -> int:
 
 
 @app.get("/stream/{msg_id}", dependencies=[Depends(require_auth)])
-async def stream(msg_id: int, request: Request):
+async def stream(msg_id: int, request: Request, preview: bool = False):
     channel_key = channels.active_key()
     if channel_key is None:
         raise HTTPException(status_code=404, detail="No active channel")
@@ -485,7 +485,7 @@ async def stream(msg_id: int, request: Request):
         headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
 
     return StreamingResponse(
-        streaming.stream_range(channel_key, msg, start, end),
+        streaming.stream_range(channel_key, msg, start, end, preview=preview),
         status_code=status,
         media_type=mime,
         headers=headers,

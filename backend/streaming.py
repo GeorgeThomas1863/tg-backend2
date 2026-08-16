@@ -2,8 +2,9 @@
 Cache-aware HTTP range streaming.
 
 stream_range walks the requested range block by block via prefetch.get_block and
-notes the playhead. Any failed block falls back to telegram.stream_range so the
-cache layer never makes playback worse.
+notes the playhead, unless preview=True opts out so a hover preview never steals
+the pin from the video actually playing. Any failed block falls back to
+telegram.stream_range so the cache layer never makes playback worse.
 """
 
 from typing import AsyncGenerator, NamedTuple
@@ -13,7 +14,9 @@ import telegram
 from config import BLOCK_SIZE
 
 
-async def stream_range(channel_key: str, msg, start: int, end: int) -> AsyncGenerator[bytes, None]:
+async def stream_range(
+    channel_key: str, msg, start: int, end: int, preview: bool = False
+) -> AsyncGenerator[bytes, None]:
     """Yield bytes [start, end] inclusive: cache-first, else download+cache."""
     position = start
     for plan in plan_blocks(start, end, msg.file.size):
@@ -22,7 +25,8 @@ async def stream_range(channel_key: str, msg, start: int, end: int) -> AsyncGene
             async for chunk in telegram.stream_range(msg, position, end):
                 yield chunk
             return
-        prefetch.note_playhead(channel_key, msg.id, plan.idx)
+        if not preview:
+            prefetch.note_playhead(channel_key, msg.id, plan.idx)
         piece = data[plan.start:plan.end]
         position += len(piece)
         yield piece

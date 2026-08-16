@@ -188,3 +188,7 @@ export function streamUrl(id) {
 export function thumbUrl(id) {
   return `${BASE}/thumb/${id}`;
 }
+
+export function previewStreamUrl(id, startSeconds) {
+  return `${BASE}/stream/${id}?preview=1#t=${startSeconds}`;
+}
