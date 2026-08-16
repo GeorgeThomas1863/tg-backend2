@@ -30,6 +30,15 @@ describe("VideoRow", () => {
     expect(container.querySelector("video")).toBeNull();
   });
 
+  test("attaches rowRef to the row root so App can observe visibility", () => {
+    const rowRef = vi.fn();
+    const { container } = render(
+      <VideoRow video={video} isExpanded={false} onToggle={vi.fn()} rowRef={rowRef} />,
+    );
+
+    expect(rowRef).toHaveBeenCalledWith(container.querySelector(".video-row"));
+  });
+
   test("shows no cache progress with default props", () => {
     const { container, getByText } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
 

@@ -14,6 +14,7 @@ import {
   postTelegramLogout,
   postTelegramPassword,
   postTelegramPhone,
+  postVisibleVideos,
   removeChannel,
   setDefaultChannel,
   streamUrl,
@@ -306,6 +307,26 @@ describe("postCacheSettings", () => {
       message: "Failed to fetch",
     });
     expect(console.log).toHaveBeenCalledWith("CACHE SETTINGS ERROR: Failed to fetch");
+  });
+});
+
+describe("postVisibleVideos", () => {
+  test("posts the ordered ids with credentials and returns parsed JSON", async () => {
+    const response = { success: true, message: "Tracking 2 visible videos" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(postVisibleVideos([5, 3])).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/prefetch/visible`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ ids: [5, 3] }),
+    });
+  });
+
+  test("returns a failure result instead of throwing on a non-ok response", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({ message: "boom" }) });
+    await expect(postVisibleVideos([1])).resolves.toEqual({ success: false, message: "boom" });
   });
 });
 

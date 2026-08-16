@@ -37,13 +37,19 @@ describe("CacheDrawer", () => {
     expect(container.querySelector(".cache-drawer-gauge-fill").style.width).toBe("100%");
   });
 
-  test("renders pin and prewarm active labels with names and optional speed", () => {
+  test("renders pin, visible, and prewarm active labels with names and optional speed", () => {
     const pinStatus = buildStatus({ active: { msg_id: 3, tier: "pin" }, videos: { "3": 25 } });
     const { container, rerender } = render(
       <CacheDrawer videos={videos} status={pinStatus} speedBps={2 * 1024 * 1024} onClose={vi.fn()} />,
     );
     expect(container.querySelector(".cache-drawer-active").textContent).toBe(
       "Downloading downloading.mp425% · ≈ 2.0 MB/s · finishing current video",
+    );
+
+    const visibleStatus = buildStatus({ active: { msg_id: 3, tier: "visible" }, videos: { "3": 25 } });
+    rerender(<CacheDrawer videos={videos} status={visibleStatus} speedBps={null} onClose={vi.fn()} />);
+    expect(container.querySelector(".cache-drawer-active").textContent).toBe(
+      "Downloading downloading.mp425% · caching on-screen videos",
     );
 
     const prewarmStatus = buildStatus({ active: { msg_id: 99, tier: "prewarm" } });

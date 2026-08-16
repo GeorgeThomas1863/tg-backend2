@@ -193,6 +193,7 @@ function buildPercentage(cachedBytes, totalBytes) {
 
 function buildTierLabel(tier) {
   if (tier === "pin") return "finishing current video";
+  if (tier === "visible") return "caching on-screen videos";
   if (tier === "prewarm") return "prewarming library";
   return "";
 }

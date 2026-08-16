@@ -97,6 +97,10 @@ class CachePausedBody(BaseModel):
     paused: bool
 
 
+class VisibleVideosBody(BaseModel):
+    ids: list[int]
+
+
 class CacheSettingsBody(BaseModel):
     cache_dir: str | None = None
     cache_max_gb: float | None = None
@@ -227,6 +231,20 @@ async def set_cache_paused(body: CachePausedBody):
         "success": True,
         "message": "Caching paused" if body.paused else "Caching resumed",
     }
+
+
+MAX_VISIBLE_IDS = 200
+
+
+@app.post("/api/prefetch/visible", dependencies=[Depends(require_auth)])
+async def set_visible_videos(body: VisibleVideosBody):
+    if len(body.ids) > MAX_VISIBLE_IDS:
+        return {"success": False, "message": "Too many visible videos"}
+    channel_key = channels.active_key()
+    if channel_key is None:
+        return {"success": False, "message": "No active channel"}
+    prefetch.set_visible(channel_key, body.ids)
+    return {"success": True, "message": f"Tracking {len(body.ids)} visible videos"}
 
 
 @app.post("/api/cache/clear", dependencies=[Depends(require_auth)])

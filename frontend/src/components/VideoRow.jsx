@@ -5,6 +5,7 @@ import { formatDate, formatDuration, formatSize } from "../format";
 // One ledger row: a clickable header line (thumb, title, mono metadata
 // columns, chevron) that expands into a player panel below it. The <video>
 // only mounts while the row is expanded, so exactly one stream is ever open.
+// rowRef lets App observe the row for on-screen cache prioritization.
 export function VideoRow({
   video,
   isExpanded,
@@ -12,6 +13,7 @@ export function VideoRow({
   cachedBytes = 0,
   isDownloading = false,
   paused = false,
+  rowRef = null,
 }) {
   const chevronClass = isExpanded ? "row-chevron expanded" : "row-chevron";
   const pct = video.size > 0 ? Math.min(100, Math.round((cachedBytes / video.size) * 100)) : 0;
@@ -19,7 +21,7 @@ export function VideoRow({
   const label = buildCacheLabel(pct, isDownloading, paused);
 
   return (
-    <div className="video-row">
+    <div className="video-row" ref={rowRef}>
       <button className="row-header" aria-expanded={isExpanded} onClick={() => onToggle(video.id)}>
         <img className="row-thumb" src={thumbUrl(video.id)} alt="" loading="lazy" />
         <span className="row-title">{video.name}</span>

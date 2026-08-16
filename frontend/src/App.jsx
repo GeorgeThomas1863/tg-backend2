@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useVideos } from "./hooks/useVideos";
 import { useSentinel } from "./hooks/useSentinel";
+import { useVisibleVideos } from "./hooks/useVisibleVideos";
 import { useCacheStatus } from "./hooks/useCacheStatus";
 import { useChannels } from "./hooks/useChannels";
 import { useTelegramAuth } from "./hooks/useTelegramAuth";
@@ -95,6 +96,7 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
   const [expandedId, setExpandedId] = useState(null);
   const [cacheDrawerOpen, setCacheDrawerOpen] = useState(false);
   const sentinelRef = useSentinel(loadMore);
+  const observeRow = useVisibleVideos(videos);
   const toggleRow = (id) => setExpandedId((current) => (current === id ? null : id));
   const jumpToPosition = (offset) => {
     setExpandedId(null);
@@ -145,7 +147,7 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
       <main key={selectedCategory || "all-videos"}>
         {videos.length === 0
           ? <div className="page-status">No videos found.</div>
-          : buildRowList(videos, expandedId, toggleRow, status)}
+          : buildRowList(videos, expandedId, toggleRow, status, observeRow)}
       </main>
       <div ref={sentinelRef} className="scroll-sentinel" aria-hidden="true" />
       {cacheDrawerOpen && status && (
@@ -187,7 +189,7 @@ function buildTelegramLabel(status) {
   return `Telegram · ${status.user?.username || status.user?.phone || "connected"}`;
 }
 
-const buildRowList = (videos, expandedId, toggleRow, status) => videos.map((video) => (
+const buildRowList = (videos, expandedId, toggleRow, status, observeRow) => videos.map((video) => (
   <VideoRow
     key={video.id}
     video={video}
@@ -196,6 +198,7 @@ const buildRowList = (videos, expandedId, toggleRow, status) => videos.map((vide
     cachedBytes={status?.videos?.[String(video.id)] || 0}
     isDownloading={status?.active?.msg_id === video.id}
     paused={Boolean(status?.paused)}
+    rowRef={observeRow(video.id)}
   />
 ));
 

@@ -2,8 +2,9 @@
 Serial cache preloader and shared block acquisition.
 
 Urgent streaming misses preempt different background blocks. Otherwise one
-worker fills the pinned video, then prewarms the library newest-first without
-crossing the cache cap. All acquisition is cache-first and deduplicated by key.
+worker fills the pinned video, then downloads the videos currently on screen
+in display order, then prewarms the library newest-first without crossing the
+cache cap. All acquisition is cache-first and deduplicated by key.
 """
 
 import asyncio
@@ -36,6 +37,13 @@ _prewarm_cursor = None
 _prewarm_is_last_page = False
 _prewarm_blocks = []
 _prewarm_message = None
+
+_visible_channel: str | None = None
+_visible_ids: list[int] = []
+_visible_index = 0
+_visible_blocks: list[int] = []
+_visible_message = None
+_visible_bytes_planned = 0
 
 
 # --- public lifecycle + acquisition ---
@@ -79,16 +87,19 @@ async def stop() -> None:
 
 
 def clear_runtime_state() -> None:
-    global _pin, _worker_download_key, _active_tier
+    global _pin, _worker_download_key, _active_tier, _visible_channel, _visible_ids
     _pin = None
     _worker_download_key = None
     _active_tier = None
+    _visible_channel = None
+    _visible_ids = []
     _urgent_keys.clear()
     _urgent_empty.set()
     _work_available.clear()
     _block_locks.clear()
     _failed_keys.clear()
     _logged_oversized_pins.clear()
+    reset_visible_pass()
     reset_prewarm_pass()
 
 
@@ -118,6 +129,24 @@ def note_playhead(channel_key: str, msg_id: int, block_idx: int) -> None:
     global _pin
     _pin = (channel_key, msg_id, block_idx)
     _work_available.set()
+
+
+def set_visible(channel_key: str, msg_ids: list[int]) -> None:
+    """Replace the on-screen video list and wake the worker for it."""
+    global _visible_channel, _visible_ids
+    _visible_channel = channel_key
+    _visible_ids = list(dict.fromkeys(msg_ids))
+    reset_visible_pass()
+    cancel_active_prewarm_download()
+    _work_available.set()
+
+
+def cancel_active_prewarm_download() -> None:
+    """Stop an in-flight prewarm block so visible work starts immediately."""
+    if _active_tier != "prewarm":
+        return
+    if _worker_download_task and not _worker_download_task.done():
+        _worker_download_task.cancel()
 
 
 async def get_block(channel_key: str, msg, idx: int, urgent: bool) -> bytes | None:
@@ -233,6 +262,10 @@ async def select_worker_job():
     if pin_job is not None:
         _active_tier = "pin"
         return pin_job
+    visible_job = await select_visible_job()
+    if visible_job is not None:
+        _active_tier = "visible"
+        return visible_job
     if not config.PREWARM_ENABLED:
         return None
     prewarm_job = await select_prewarm_job()
@@ -269,6 +302,85 @@ async def select_pin_job():
             return None
         return channel_key, msg, idx
     return None
+
+
+# --- visible pass ---
+
+
+async def select_visible_job():
+    global _visible_message
+    if _visible_blocks:
+        channel_key = active_visible_channel()
+        if channel_key is None:
+            return None
+        return channel_key, _visible_message, _visible_blocks.pop(0)
+    video = await find_next_visible_video()
+    if video is None:
+        return None
+    msg, blocks = video
+    _visible_message = msg
+    _visible_blocks.extend(blocks)
+    channel_key = active_visible_channel()
+    if channel_key is None:
+        return None
+    return channel_key, _visible_message, _visible_blocks.pop(0)
+
+
+async def find_next_visible_video():
+    global _visible_bytes_planned
+    while True:
+        if active_visible_channel() is None:
+            return None
+        msg_id = take_next_visible_id()
+        if msg_id is None:
+            return None
+        msg = await resolve_visible_message(msg_id)
+        if not msg or not msg.file:
+            continue
+        channel_key = active_visible_channel()
+        if channel_key is None:
+            return None
+        # Budget by full file size so the visible set never evicts itself.
+        if _visible_bytes_planned + msg.file.size > cache.MAX_BYTES:
+            continue
+        _visible_bytes_planned += msg.file.size
+        blocks, _ = build_uncached_blocks(channel_key, msg.id, msg.file.size)
+        if not blocks:
+            continue
+        return msg, blocks
+
+
+def take_next_visible_id():
+    global _visible_index
+    if _visible_index >= len(_visible_ids):
+        return None
+    msg_id = _visible_ids[_visible_index]
+    _visible_index += 1
+    return msg_id
+
+
+async def resolve_visible_message(msg_id: int):
+    try:
+        return await telegram.get_message(msg_id)
+    except Exception:
+        report_error(f"resolving visible video {msg_id}")
+        return None
+
+
+def active_visible_channel() -> str | None:
+    """Return the visible list's channel only while it is still active."""
+    channel_key = channels.active_key()
+    if channel_key is None or channel_key != _visible_channel:
+        return None
+    return channel_key
+
+
+def reset_visible_pass() -> None:
+    global _visible_index, _visible_blocks, _visible_message, _visible_bytes_planned
+    _visible_index = 0
+    _visible_blocks = []
+    _visible_message = None
+    _visible_bytes_planned = 0
 
 
 # --- prewarm pass ---
@@ -363,6 +475,7 @@ async def sleep_before_rescan() -> None:
             _work_available.wait(), timeout=config.PREWARM_RESCAN_SECONDS
         )
     except asyncio.TimeoutError:
+        reset_visible_pass()
         reset_prewarm_pass()
     except asyncio.CancelledError:
         raise

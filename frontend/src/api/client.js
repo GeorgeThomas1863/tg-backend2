@@ -117,6 +117,10 @@ export async function postCacheClear() {
   return mutate("/api/cache/clear", "POST", null, "CACHE CLEAR");
 }
 
+export async function postVisibleVideos(ids) {
+  return mutate("/api/prefetch/visible", "POST", { ids }, "VISIBLE VIDEOS");
+}
+
 export async function addChannel(raw) {
   return mutate("/api/channels", "POST", { channel: raw }, "ADD CHANNEL");
 }
