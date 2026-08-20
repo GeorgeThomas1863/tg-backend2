@@ -107,6 +107,100 @@ async def test_different_urgent_block_preempts_and_worker_retries(
     assert cache.read_block("test", 1, 0) == block_bytes(1, 0)
 
 
+async def test_cancelled_visible_download_requeues_its_block(tmp_path, monkeypatch):
+    world = install_world(
+        tmp_path, monkeypatch, [make_msg(1, 3 * BLOCK_SIZE), make_msg(2)]
+    )
+    prefetch._visible_channel = "test"
+    prefetch._visible_message = world["messages"][1]
+    prefetch._visible_blocks = [2]
+    prefetch._active_tier = "visible"
+    idx = 1
+
+    download = asyncio.create_task(
+        prefetch.run_worker_download("test", world["messages"][1], idx)
+    )
+    await wait_until(lambda: world["calls"] == [(1, idx)])
+
+    urgent = asyncio.create_task(
+        prefetch.get_block("test", world["messages"][2], 0, True)
+    )
+    await wait_until(lambda: (1, idx, 1) in world["cancelled"])
+    await download
+
+    assert prefetch._visible_blocks == [idx, 2]
+
+    world["gates"][(2, 0, 1)].set()
+    await urgent
+
+
+async def test_visible_reset_during_cancel_does_not_reinsert_stale_block(
+    tmp_path, monkeypatch
+):
+    world = install_world(
+        tmp_path, monkeypatch, [make_msg(1, 3 * BLOCK_SIZE), make_msg(2)]
+    )
+    prefetch._visible_channel = "test"
+    prefetch._visible_message = world["messages"][1]
+    prefetch._visible_blocks = [2]
+    prefetch._active_tier = "visible"
+    idx = 1
+
+    download = asyncio.create_task(
+        prefetch.run_worker_download("test", world["messages"][1], idx)
+    )
+    await wait_until(lambda: world["calls"] == [(1, idx)])
+
+    # A concurrent set_visible() resets the walk without cancelling the
+    # in-flight download for the old video.
+    prefetch.set_visible("test", [])
+
+    urgent = asyncio.create_task(
+        prefetch.get_block("test", world["messages"][2], 0, True)
+    )
+    await wait_until(lambda: (1, idx, 1) in world["cancelled"])
+    await download
+
+    assert prefetch._visible_message is None
+    assert prefetch._visible_blocks == []
+
+    world["gates"][(2, 0, 1)].set()
+    await urgent
+
+
+async def test_stop_mid_visible_download_propagates_cancel_without_requeue(
+    tmp_path, monkeypatch
+):
+    world = install_world(
+        tmp_path, monkeypatch, [make_msg(1, 3 * BLOCK_SIZE)]
+    )
+    prefetch._visible_channel = "test"
+    prefetch._visible_message = world["messages"][1]
+    prefetch._visible_blocks = [2]
+    prefetch._active_tier = "visible"
+    idx = 1
+
+    # Wrapping run_worker_download in its own task and cancelling that task
+    # (rather than only the inner _worker_download_task) mirrors what
+    # stop() does to _worker_task when it is awaiting run_worker_download.
+    download = asyncio.create_task(
+        prefetch.run_worker_download("test", world["messages"][1], idx)
+    )
+    await wait_until(lambda: world["calls"] == [(1, idx)])
+
+    download.cancel()
+
+    try:
+        await download
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("CancelledError did not propagate")
+
+    assert download.cancelled()
+    assert prefetch._visible_blocks == [2]
+
+
 async def test_same_urgent_block_shares_worker_download(tmp_path, monkeypatch):
     world = install_world(tmp_path, monkeypatch, [make_msg(1)])
     prefetch.note_playhead("test", 1, 0)
@@ -205,6 +299,14 @@ async def test_resuming_wakes_parked_worker(tmp_path, monkeypatch):
     prefetch.set_paused(True)
 
     prefetch.set_paused(False)
+
+    assert prefetch._work_available.is_set()
+
+
+async def test_setting_priority_wakes_parked_worker(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch, [])
+
+    prefetch.set_priority("test", 1)
 
     assert prefetch._work_available.is_set()
 
@@ -310,6 +412,7 @@ def reset_prefetch_state(monkeypatch):
     prefetch._urgent_empty.set()
     prefetch._work_available = asyncio.Event()
     prefetch._pin = None
+    prefetch._priority = None
     prefetch._worker_task = None
     prefetch._worker_download_task = None
     prefetch._worker_download_key = None

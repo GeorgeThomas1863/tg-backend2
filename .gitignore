@@ -7,6 +7,7 @@ session
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 
 # uv test-run lock artifacts
 backend/.test-tmp/
@@ -22,7 +23,7 @@ docs/
 # Local scratch — playgrounds and one-off dev experiments
 playgrounds/
 
-# Secrets — ignore every .env variant, but keep the committed template
+# Secrets — ignore every .env variant
 .env*
 
 # Node
@@ -37,6 +38,8 @@ npm-debug.log*
 !.vscode/extensions.json
 .idea/
 .DS_Store
+Thumbs.db
+desktop.ini
 
 # Claude Code — local scratch/screenshots, dev check scripts, per-machine settings
 .claude/.tmp/

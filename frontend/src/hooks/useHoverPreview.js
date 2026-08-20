@@ -8,9 +8,18 @@ const HOVER_DELAY_MS = 300;
 export function useHoverPreview(disabled) {
   const [previewing, setPreviewing] = useState(false);
   const timerRef = useRef(null);
+  const hoveringRef = useRef(false);
 
+  // Re-arm through the same debounce on disabled:true->false (e.g. collapsing
+  // a row without the pointer ever leaving it) only if the pointer is still
+  // over the row; startPreviewTimer's own guard keeps this from stacking a
+  // second timer on top of one a mouseenter already started.
   useEffect(() => {
-    if (disabled) stopPreview();
+    if (disabled) {
+      stopPreview();
+      return;
+    }
+    if (hoveringRef.current) startPreviewTimer();
   }, [disabled]);
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
@@ -25,5 +34,15 @@ export function useHoverPreview(disabled) {
     setPreviewing(false);
   }
 
-  return { previewing, onMouseEnter: startPreviewTimer, onMouseLeave: stopPreview };
+  function onMouseEnter() {
+    hoveringRef.current = true;
+    startPreviewTimer();
+  }
+
+  function onMouseLeave() {
+    hoveringRef.current = false;
+    stopPreview();
+  }
+
+  return { previewing, onMouseEnter, onMouseLeave };
 }

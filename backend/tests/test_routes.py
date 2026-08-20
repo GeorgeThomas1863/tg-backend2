@@ -13,6 +13,7 @@ import prefetch
 import pytest
 import streaming
 import telegram
+import video_metadata
 
 FILE_SIZE = 100
 DATA = bytes(range(FILE_SIZE))
@@ -165,7 +166,10 @@ def test_videos_returns_envelope_from_telegram(authed_client, monkeypatch):
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos_with_total)
     resp = authed_client.get("/api/videos")
     assert resp.status_code == 200
-    assert resp.json() == {"videos": videos, "total": 19}
+    assert resp.json() == {
+        "videos": [{"id": 7, "name": "a.mp4", "size": 123, "caption": None, "posted_ts": None}],
+        "total": 19,
+    }
 
 
 def test_videos_returns_502_when_telegram_fails(authed_client, monkeypatch):
@@ -174,6 +178,30 @@ def test_videos_returns_502_when_telegram_fails(authed_client, monkeypatch):
 
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos)
     assert authed_client.get("/api/videos").status_code == 502
+
+
+def test_videos_search_returns_502_when_search_videos_fails(authed_client, monkeypatch):
+    async def fake_search_videos(search, limit, offset):
+        return None
+
+    monkeypatch.setattr(video_metadata, "search_videos", fake_search_videos)
+    resp = authed_client.get("/api/videos?search=alice")
+    assert resp.status_code == 502
+
+
+def test_videos_search_success_includes_next_offset(authed_client, monkeypatch):
+    async def fake_search_videos(search, limit, offset):
+        return [{"id": 7, "name": "a.mp4"}], 1, 9
+
+    monkeypatch.setattr(video_metadata, "search_videos", fake_search_videos)
+    resp = authed_client.get("/api/videos?search=alice&offset=5")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "videos": [{"id": 7, "name": "a.mp4"}],
+        "total": 1,
+        "next_offset": 9,
+    }
 
 
 def test_videos_passes_before_id_through(authed_client, monkeypatch):

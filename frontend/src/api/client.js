@@ -5,11 +5,12 @@
 
 const BASE = import.meta.env.VITE_API_BASE;
 
-export async function fetchVideos({ limit = 50, beforeId = null, offset = null, category = null } = {}) {
+export async function fetchVideos({ limit = 50, beforeId = null, offset = null, category = null, search = null } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (beforeId !== null) params.set("before_id", String(beforeId));
   if (offset !== null) params.set("offset", String(offset));
   if (category) params.set("category", category);
+  if (search) params.set("search", search);
   const res = await fetch(`${BASE}/api/videos?${params}`, { credentials: "include" });
   if (!res.ok) {
     const error = new Error(`HTTP ${res.status}`);
@@ -119,6 +120,10 @@ export async function postCacheClear() {
 
 export async function postVisibleVideos(ids) {
   return mutate("/api/prefetch/visible", "POST", { ids }, "VISIBLE VIDEOS");
+}
+
+export async function requestPriorityCache(id) {
+  return mutate("/api/prefetch/priority", "POST", { id }, "PRIORITY CACHE");
 }
 
 export async function addChannel(raw) {

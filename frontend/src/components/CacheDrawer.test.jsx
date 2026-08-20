@@ -1,6 +1,9 @@
 import { describe, test, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CacheDrawer } from "./CacheDrawer";
+import { requestPriorityCache } from "../api/client";
+
+vi.mock("../api/client", () => ({ requestPriorityCache: vi.fn() }));
 
 const videos = [
   { id: 1, name: "cached.mp4", size: 100 },
@@ -60,6 +63,16 @@ describe("CacheDrawer", () => {
     expect(container.querySelector(".cache-drawer-active").textContent).not.toContain("MB/s");
   });
 
+  test("renders a priority active label with no dangling separator", () => {
+    const priorityStatus = buildStatus({ active: { msg_id: 3, tier: "priority" }, videos: { "3": 25 } });
+    const { container } = render(
+      <CacheDrawer videos={videos} status={priorityStatus} speedBps={null} onClose={vi.fn()} />,
+    );
+    const text = container.querySelector(".cache-drawer-active").textContent;
+    expect(text).toBe("Downloading downloading.mp425% · caching requested video");
+    expect(text).not.toMatch(/·\s*$/);
+  });
+
   test("renders paused and idle active states", () => {
     const { container, rerender } = render(
       <CacheDrawer videos={videos} status={buildStatus({ paused: true })} speedBps={null} onClose={vi.fn()} />,
@@ -80,13 +93,83 @@ describe("CacheDrawer", () => {
       <CacheDrawer videos={videos} status={status} speedBps={null} onClose={vi.fn()} />,
     );
     expect([...container.querySelectorAll(".cache-drawer-item-state")].map((item) => item.textContent)).toEqual([
-      "cached", "40% paused", "20%", "—", "60%",
+      "cached", "40% paused", "20%", "↑", "60%",
     ]);
 
     rerender(
       <CacheDrawer videos={videos} status={{ ...status, paused: false, active: { msg_id: 3, tier: "pin" } }} speedBps={null} onClose={vi.fn()} />,
     );
     expect(container.querySelectorAll(".cache-drawer-item-state")[2].textContent).toBe("20% ↓");
+  });
+
+  test("shows a cache-now button for a non-cached video and requests priority caching on click", async () => {
+    requestPriorityCache.mockReset();
+    requestPriorityCache.mockResolvedValue({ success: true });
+    const status = buildStatus({ videos: { "1": 100 } });
+    const { container } = render(
+      <CacheDrawer videos={videos} status={status} speedBps={null} onClose={vi.fn()} />,
+    );
+
+    const items = container.querySelectorAll(".cache-drawer-item");
+    const button = items[3].querySelector(".cache-drawer-item-queue");
+    expect(button).not.toBeNull();
+    expect(button).toBeEnabled();
+
+    fireEvent.click(button);
+    await waitFor(() => expect(requestPriorityCache).toHaveBeenCalledWith(4));
+    expect(button).toBeDisabled();
+  });
+
+  test("re-enables the cache-now button and shows the message on a failed request", async () => {
+    requestPriorityCache.mockReset();
+    requestPriorityCache.mockResolvedValue({ success: false, message: "No active channel" });
+    const status = buildStatus({ videos: { "1": 100 } });
+    const { container } = render(
+      <CacheDrawer videos={videos} status={status} speedBps={null} onClose={vi.fn()} />,
+    );
+
+    const items = container.querySelectorAll(".cache-drawer-item");
+    const button = items[3].querySelector(".cache-drawer-item-queue");
+
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(await screen.findByRole("alert")).toHaveTextContent("No active channel");
+  });
+
+  test("re-enables the cache-now button and shows a message when the request throws", async () => {
+    requestPriorityCache.mockReset();
+    requestPriorityCache.mockRejectedValue(new Error("network down"));
+    const status = buildStatus({ videos: { "1": 100 } });
+    const { container } = render(
+      <CacheDrawer videos={videos} status={status} speedBps={null} onClose={vi.fn()} />,
+    );
+
+    const items = container.querySelectorAll(".cache-drawer-item");
+    const button = items[3].querySelector(".cache-drawer-item-queue");
+
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(await screen.findByRole("alert")).toHaveTextContent("network down");
+  });
+
+  test("does not show a cache-now button for a cached video", () => {
+    const status = buildStatus({ videos: { "1": 100 } });
+    const { container } = render(
+      <CacheDrawer videos={videos} status={status} speedBps={null} onClose={vi.fn()} />,
+    );
+
+    const items = container.querySelectorAll(".cache-drawer-item");
+    expect(items[0].querySelector(".cache-drawer-item-queue")).toBeNull();
+  });
+
+  test("wraps the item rows in a scrollable list container", () => {
+    const { container } = render(
+      <CacheDrawer videos={videos} status={buildStatus()} speedBps={null} onClose={vi.fn()} />,
+    );
+
+    const list = container.querySelector(".cache-drawer-list");
+    expect(list).not.toBeNull();
+    expect(list.querySelectorAll(".cache-drawer-item")).toHaveLength(videos.length);
   });
 
   test("fires onClose from the close button", () => {

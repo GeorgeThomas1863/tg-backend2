@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 import cache
+import channels
 import config
 import prefetch
 import telegram
@@ -105,6 +106,125 @@ async def test_oversized_pin_logs_once_across_calls(tmp_path, monkeypatch, capsy
     assert capsys.readouterr().out.count(notice) == 1
 
 
+async def test_pin_outranks_priority(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    pin_msg = make_msg(1, BLOCK_SIZE)
+    priority_msg = make_msg(2, BLOCK_SIZE)
+    messages = {1: pin_msg, 2: priority_msg}
+
+    async def get_message(msg_id):
+        return messages[msg_id]
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.note_playhead("test", 1, 0)
+    prefetch.set_priority("test", 2)
+
+    job = await prefetch.select_worker_job()
+
+    assert job == ("test", pin_msg, 0)
+    assert prefetch._active_tier == "pin"
+
+
+async def test_priority_outranks_visible(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    priority_msg = make_msg(2, BLOCK_SIZE)
+    visible_msg = make_msg(3, BLOCK_SIZE)
+    messages = {2: priority_msg, 3: visible_msg}
+
+    async def get_message(msg_id):
+        return messages[msg_id]
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.set_visible("test", [3])
+    prefetch.set_priority("test", 2)
+
+    job = await prefetch.select_worker_job()
+
+    assert job == ("test", priority_msg, 0)
+    assert prefetch._active_tier == "priority"
+
+
+async def test_priority_block_selection_starts_at_zero(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    cache.write_block("test", 7, 0, b"x" * BLOCK_SIZE)
+
+    selected = prefetch.select_priority_block("test", 7, 3 * BLOCK_SIZE)
+
+    assert selected == 1
+
+
+async def test_priority_slot_cleared_when_file_fully_cached(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    msg = make_msg(5, BLOCK_SIZE)
+    cache.write_block("test", 5, 0, b"x" * BLOCK_SIZE)
+
+    async def get_message(msg_id):
+        return msg
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.set_priority("test", 5)
+
+    assert await prefetch.select_priority_job() is None
+    assert prefetch._priority is None
+
+
+async def test_priority_oversized_file_skipped_and_cleared(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    msg = make_msg(6, cache.MAX_BYTES + 1)
+
+    async def get_message(msg_id):
+        return msg
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.set_priority("test", 6)
+
+    assert await prefetch.select_priority_job() is None
+    assert prefetch._priority is None
+
+
+async def test_priority_cleared_when_stored_channel_is_stale(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    msg = make_msg(5, BLOCK_SIZE)
+
+    async def get_message(msg_id):
+        return msg
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    monkeypatch.setattr(channels, "active_key", lambda: "other")
+    prefetch.set_priority("test", 5)
+
+    assert await prefetch.select_priority_job() is None
+    assert prefetch._priority is None
+
+
+async def test_pin_dropped_when_stored_channel_is_stale(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+    msg = make_msg(7, BLOCK_SIZE)
+
+    async def get_message(msg_id):
+        return msg
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    monkeypatch.setattr(channels, "active_key", lambda: "other")
+    prefetch.note_playhead("test", 7, 0)
+
+    assert await prefetch.select_pin_job() is None
+    assert prefetch._pin is None
+
+
+async def test_priority_cleared_when_message_fails_to_resolve(tmp_path, monkeypatch):
+    install_world(tmp_path, monkeypatch)
+
+    async def get_message(msg_id):
+        return None
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.set_priority("test", 5)
+
+    assert await prefetch.select_priority_job() is None
+    assert prefetch._priority is None
+
+
 async def test_complete_pin_falls_through_to_prewarm(tmp_path, monkeypatch):
     install_world(tmp_path, monkeypatch)
     msg = make_msg(7, BLOCK_SIZE)
@@ -196,10 +316,14 @@ def install_world(tmp_path, monkeypatch):
     prefetch._urgent_empty.set()
     prefetch._work_available.clear()
     prefetch._pin = None
+    prefetch._priority = None
     prefetch._worker_task = None
     prefetch._worker_download_task = None
     prefetch._worker_download_key = None
     prefetch._logged_oversized_pins.clear()
+    prefetch._visible_channel = None
+    prefetch._visible_ids = []
+    prefetch.reset_visible_pass()
     prefetch.reset_prewarm_pass()
 
 

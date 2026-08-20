@@ -104,9 +104,9 @@ function CategoryRow({ item, isMajor = false, isNested = false, onSelect }) {
 
   return (
     <button type="button" role="option" aria-selected="false" className={classes.join(" ")} onClick={() => onSelect(item.key)}>
-      {item.start !== undefined && <span className="category-row-range">{item.start}–{item.end}</span>}
       <span className="category-row-name">{item.name}</span>
       {typeof item.count === "number" && <span className="category-row-count">{item.count.toLocaleString()}</span>}
+      {item.start !== undefined && <span className="category-row-range">{item.start}–{item.end}</span>}
     </button>
   );
 }
@@ -180,13 +180,13 @@ const CATEGORY_STYLES = `
   .category-combo-button:hover { border-color: var(--muted); }
   .category-dropdown { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(420px, calc(100vw - 48px)); max-height: 390px; overflow: auto; padding: 8px; background: var(--paper); border: 1px solid var(--muted); box-shadow: 0 14px 32px #20212422; }
   .category-search { width: 100%; margin-bottom: 7px; padding: 7px 8px; color: var(--ink); background: var(--paper); border: 1px solid var(--hairline); font: inherit; }
-  .category-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; width: 100%; padding: 7px 8px 7px 24px; text-align: left; }
+  .category-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; width: 100%; padding: 7px 8px 7px 24px; text-align: left; }
   .category-row:hover { background: var(--hover); }
   .category-row-major { padding-left: 8px; font-weight: 600; }
   .category-row-nested { padding-left: 40px; }
   .category-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .category-row-count, .category-row-range { font: 11px var(--font-mono); white-space: nowrap; }
-  .category-row-range { color: var(--muted); }
+  .category-row-range { color: var(--muted); text-align: right; justify-self: end; }
   .category-chip { padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--green) 55%, var(--hairline)); background: color-mix(in srgb, var(--green) 8%, var(--paper)); font-size: 11px; }
   .category-chip button { padding-left: 6px; color: var(--green); }
   @media (max-width: 640px) { .category-combo-button { min-width: 180px; } }

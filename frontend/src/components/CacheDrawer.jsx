@@ -1,13 +1,37 @@
 import { useState } from "react";
 import { formatSize } from "../format";
+import { requestPriorityCache } from "../api/client";
 
 const LOCATION_WARNING = "Changing the location wipes the current cache. Continue?";
 const CLEAR_WARNING = "Delete all cached data? Videos will re-download as needed.";
 
 export function CacheDrawer({ videos, status, speedBps, onClose, onSaveSettings, onClearCache }) {
+  const [queuedIds, setQueuedIds] = useState(() => new Set());
+  const [cacheNowError, setCacheNowError] = useState("");
+
   if (status == null) return null;
 
   const gaugePct = buildPercentage(status.total_bytes, status.max_bytes);
+
+  async function cacheNow(id) {
+    setQueuedIds((prev) => new Set(prev).add(id));
+    setCacheNowError("");
+    try {
+      const result = await requestPriorityCache(id);
+      if (!result?.success) failCacheNow(id, result?.message || "Unable to queue this video.");
+    } catch (e) {
+      failCacheNow(id, e.message || "Unable to queue this video.");
+    }
+  }
+
+  function failCacheNow(id, message) {
+    setQueuedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setCacheNowError(message);
+  }
 
   return (
     <aside className="cache-drawer">
@@ -23,7 +47,10 @@ export function CacheDrawer({ videos, status, speedBps, onClose, onSaveSettings,
       </div>
       <CacheSettings status={status} onSaveSettings={onSaveSettings} onClearCache={onClearCache} />
       {buildActiveCard(videos, status, speedBps)}
-      {buildItems(videos, status)}
+      {cacheNowError && <div className="cache-drawer-settings-error" role="alert">{cacheNowError}</div>}
+      <div className="cache-drawer-list">
+        {buildItems(videos, status, queuedIds, cacheNow)}
+      </div>
     </aside>
   );
 }
@@ -152,14 +179,14 @@ function buildActiveCard(videos, status, speedBps) {
   );
 }
 
-function buildItems(videos, status) {
+function buildItems(videos, status, queuedIds, onCacheNow) {
   const items = [];
 
   for (const video of videos) {
     items.push(
       <div className="cache-drawer-item" key={video.id}>
         <div className="cache-drawer-item-name">{video.name}</div>
-        <div className="cache-drawer-item-state">{buildItemState(video, status)}</div>
+        <div className="cache-drawer-item-state">{buildItemState(video, status, queuedIds, onCacheNow)}</div>
       </div>,
     );
   }
@@ -167,7 +194,7 @@ function buildItems(videos, status) {
   return items;
 }
 
-function buildItemState(video, status) {
+function buildItemState(video, status, queuedIds, onCacheNow) {
   const cachedBytes = status.videos[String(video.id)] || 0;
   const pct = buildPercentage(cachedBytes, video.size);
   const downloading = status.active?.msg_id === video.id;
@@ -175,8 +202,22 @@ function buildItemState(video, status) {
   if (pct >= 100) return "cached";
   if (downloading && status.paused) return `${pct}% paused`;
   if (downloading) return `${pct}% ↓`;
-  if (pct === 0) return "—";
+  if (pct === 0) return buildCacheNowButton(video.id, queuedIds, onCacheNow);
   return `${pct}%`;
+}
+
+function buildCacheNowButton(id, queuedIds, onCacheNow) {
+  return (
+    <button
+      type="button"
+      className="cache-drawer-item-queue"
+      title="Cache this video now"
+      disabled={queuedIds.has(id)}
+      onClick={() => onCacheNow(id)}
+    >
+      ↑
+    </button>
+  );
 }
 
 function findVideo(videos, id) {
@@ -193,6 +234,7 @@ function buildPercentage(cachedBytes, totalBytes) {
 
 function buildTierLabel(tier) {
   if (tier === "pin") return "finishing current video";
+  if (tier === "priority") return "caching requested video";
   if (tier === "visible") return "caching on-screen videos";
   if (tier === "prewarm") return "prewarming library";
   return "";

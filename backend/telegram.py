@@ -193,6 +193,37 @@ async def get_message(msg_id: int, channel_key: str | None = None):
     return msg
 
 
+async def get_messages_by_ids(msg_ids: list[int], channel_key: str | None = None) -> list:
+    """Resolve multiple message ids in one Telegram call (search's cursor bypass).
+
+    Preserves the order of `msg_ids`. Drops ids that don't resolve to a
+    message with media (deleted, wrong type, or not found — Telethon returns
+    None in that slot). Never raises; a Telegram failure degrades to [].
+    """
+    try:
+        return await get_messages_by_ids_or_raise(msg_ids, channel_key)
+    except Exception:
+        display_key = channel_key or channels.active_key()
+        channel = config.parse_channel(display_key) if display_key else None
+        report_error(f"resolving {len(msg_ids)} message id(s) from {channel!r}")
+        return []
+
+
+async def get_messages_by_ids_or_raise(msg_ids: list[int], channel_key: str | None = None) -> list:
+    """Same resolution as get_messages_by_ids, but propagates Telegram failures
+    instead of swallowing them — search needs to tell "zero matches" apart
+    from "Telegram request failed" to fail loud per its 502 contract.
+    """
+    if not msg_ids:
+        return []
+    channel_key = channel_key or channels.active_key()
+    if channel_key is None:
+        return []
+    channel = config.parse_channel(channel_key)
+    msgs = await with_entity_warm(lambda: client.get_messages(channel, ids=msg_ids))
+    return [m for m in msgs if m and m.file]
+
+
 def read_cached_message(channel_key: str, msg_id: int):
     cache_key = (channel_key, msg_id)
     entry = _msg_cache.get(cache_key)

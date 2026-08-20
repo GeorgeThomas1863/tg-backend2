@@ -69,7 +69,7 @@ button {
 }
 
 .ledger-header h1 {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
 }
 
@@ -79,9 +79,13 @@ button {
   gap: 10px;
 }
 
+.ledger-category-summary {
+  font-size: 16px;
+}
+
 .channel-header-btn {
   color: var(--green);
-  font: 11.5px var(--font-mono);
+  font: 13.5px var(--font-mono);
   padding: 2px 0;
 }
 
@@ -91,7 +95,7 @@ button {
 
 .ledger-summary {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 14.5px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -102,7 +106,7 @@ button {
   display: flex;
   align-items: center;
   gap: 5px;
-  font: 11.5px var(--font-mono);
+  font: 13.5px var(--font-mono);
 }
 
 .jump-controls-input {
@@ -123,7 +127,7 @@ button {
 .cache-header-btn,
 .cache-pause-btn,
 .telegram-header-btn {
-  font: 11.5px var(--font-mono);
+  font: 13.5px var(--font-mono);
   color: var(--green);
   border: 1px solid var(--hairline);
   border-radius: 999px;
@@ -139,6 +143,53 @@ button {
 
 .cache-pause-btn.paused {
   color: var(--error);
+}
+
+/*--- category bar + search ---*/
+
+.category-bar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.video-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.video-search-input {
+  width: 220px;
+  padding: 7px 28px 7px 9px;
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+  background: var(--paper);
+  font: 13.5px var(--font-mono);
+}
+
+.video-search-input:hover {
+  border-color: var(--muted);
+}
+
+.video-search-input::placeholder {
+  color: var(--muted);
+}
+
+.video-search-clear {
+  position: absolute;
+  right: 7px;
+  color: var(--green);
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px;
+}
+
+@media (max-width: 640px) {
+  .video-search-input {
+    width: 180px;
+  }
 }
 
 /*--- video rows ---*/
@@ -172,14 +223,43 @@ button {
   background: #e7e7e4;
 }
 
-video.row-thumb {
-  object-fit: cover;
+.preview-popup {
+  position: fixed;
+  width: 360px;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(32, 33, 36, 0.15);
   background: #000;
+  overflow: hidden;
+  z-index: 11;
+  pointer-events: none;
+}
+
+.preview-popup-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.row-title-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
 }
 
 .row-title {
   font-weight: 600;
   font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta {
+  font-size: 11px;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -270,12 +350,43 @@ video.row-thumb {
   }
 }
 
+.player-video-wrap {
+  position: relative;
+}
+
 .player-video {
   display: block;
   width: 100%;
   border-radius: 8px;
   border: 1px solid var(--hairline);
   background: #000;
+}
+
+.player-skip {
+  position: absolute;
+  bottom: 60px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.player-skip:hover,
+.player-skip:focus-visible {
+  opacity: 1;
+}
+
+.player-skip-back {
+  left: 10px;
+}
+
+.player-skip-forward {
+  right: 10px;
 }
 
 .player-meta {
@@ -314,6 +425,8 @@ video.row-thumb {
   border-right: 1px solid var(--hairline);
   box-shadow: 12px 0 28px rgba(32,33,36,0.08);
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   z-index: 10;
 }
 
@@ -321,18 +434,18 @@ video.row-thumb {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
 }
 
 .cache-drawer-close {
   color: var(--muted);
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .cache-drawer-total {
   margin-top: 12px;
-  font: 600 18px var(--font-mono);
+  font: 600 20px var(--font-mono);
 }
 
 .cache-drawer-gauge {
@@ -352,7 +465,7 @@ video.row-thumb {
   margin-bottom: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--hairline);
-  font: 11px var(--font-mono);
+  font: 13px var(--font-mono);
 }
 
 .cache-drawer-settings-row {
@@ -367,7 +480,7 @@ video.row-thumb {
   flex: 1;
   gap: 4px;
   color: var(--muted);
-  font-size: 10.5px;
+  font-size: 12.5px;
 }
 
 .cache-drawer-settings-input {
@@ -378,7 +491,7 @@ video.row-thumb {
   background: var(--paper);
   border: 1px solid var(--hairline);
   border-radius: 6px;
-  font: 11px var(--font-mono);
+  font: 13px var(--font-mono);
 }
 
 .cache-drawer-settings-save,
@@ -386,7 +499,7 @@ video.row-thumb {
 .cache-drawer-clear,
 .cache-drawer-clear-actions button {
   color: var(--green);
-  font: 10.5px var(--font-mono);
+  font: 12.5px var(--font-mono);
 }
 
 .cache-drawer-settings-save {
@@ -412,7 +525,7 @@ video.row-thumb {
 .cache-drawer-settings-error {
   margin-top: 8px;
   color: var(--red, #a33);
-  font-size: 10.5px;
+  font-size: 12.5px;
 }
 
 .cache-drawer-active {
@@ -420,7 +533,12 @@ video.row-thumb {
   padding: 10px 12px;
   border: 1px solid var(--hairline);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 14px;
+}
+
+.cache-drawer-list {
+  flex: 1;
+  overflow-y: auto;
 }
 
 .cache-drawer-item {
@@ -433,7 +551,7 @@ video.row-thumb {
 
 .cache-drawer-item-name {
   flex: 1;
-  font-size: 11.5px;
+  font-size: 13.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -441,7 +559,21 @@ video.row-thumb {
 
 .cache-drawer-item-state {
   color: var(--muted);
-  font: 10.5px var(--font-mono);
+  font: 12.5px var(--font-mono);
+}
+
+.cache-drawer-item-queue {
+  color: var(--muted);
+  font: 12.5px var(--font-mono);
+}
+
+.cache-drawer-item-queue:hover:not(:disabled) {
+  color: var(--green);
+}
+
+.cache-drawer-item-queue:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /*--- channel drawer ---*/
@@ -772,13 +904,72 @@ video.row-thumb {
     padding: 24px 14px 56px;
   }
 
-  .row-header {
-    grid-template-columns: 80px minmax(0, 1fr) 52px 18px;
-    gap: 0 10px;
+  /* Big Thumb Stack: full-bleed tall thumb over title/meta, one card per row. */
+  .video-row {
+    border-bottom: none;
+    margin-bottom: 12px;
   }
 
+  .row-header {
+    grid-template-columns: 1fr;
+    grid-template-areas: "thumb" "title" "meta";
+    gap: 0;
+    align-items: start;
+    padding: 0 6px 10px;
+    border-radius: 0;
+  }
+
+  .row-thumb {
+    grid-area: thumb;
+    width: 100%;
+    height: 170px;
+    aspect-ratio: unset;
+    margin: 0 -6px 9px;
+    border-radius: 8px;
+  }
+
+  /* Flatten so .row-title and .row-meta become direct grid items of
+     .row-header and can claim their own grid-template-areas rows. */
+  .row-title-wrap {
+    display: contents;
+  }
+
+  .row-title {
+    grid-area: title;
+    margin-top: 9px;
+    font-size: 15px;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .row-meta {
+    grid-area: meta;
+    margin-top: 3px;
+    white-space: normal;
+  }
+
+  /* Date/duration/size columns and the chevron drop off the card; the whole
+     card remains the tap target that expands the player. */
+  .row-col,
   .row-col-wide {
     display: none;
+  }
+
+  .row-chevron {
+    display: none;
+  }
+
+  .cache-strip {
+    padding: 8px 6px 10px;
+  }
+
+  /* Clamp the hover-preview popup so its fixed 360px width can never
+     overflow a narrow phone viewport (popup only ever shows on hover,
+     but width math shouldn't assume a desktop-sized window). */
+  .preview-popup {
+    width: min(360px, calc(100vw - 24px));
   }
 
   .player-meta {

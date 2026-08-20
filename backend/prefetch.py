@@ -2,9 +2,10 @@
 Serial cache preloader and shared block acquisition.
 
 Urgent streaming misses preempt different background blocks. Otherwise one
-worker fills the pinned video, then downloads the videos currently on screen
-in display order, then prewarms the library newest-first without crossing the
-cache cap. All acquisition is cache-first and deduplicated by key.
+worker fills the pinned video, then completes a one-slot priority video
+front-to-back, then downloads the videos currently on screen in display
+order, then prewarms the library newest-first without crossing the cache
+cap. All acquisition is cache-first and deduplicated by key.
 """
 
 import asyncio
@@ -23,6 +24,7 @@ _urgent_empty.set()
 _work_available = asyncio.Event()
 
 _pin: tuple[str, int, int] | None = None
+_priority: tuple[str, int] | None = None
 _worker_task = None
 _worker_download_task = None
 _worker_download_key = None
@@ -87,8 +89,9 @@ async def stop() -> None:
 
 
 def clear_runtime_state() -> None:
-    global _pin, _worker_download_key, _active_tier, _visible_channel, _visible_ids
+    global _pin, _priority, _worker_download_key, _active_tier, _visible_channel, _visible_ids
     _pin = None
+    _priority = None
     _worker_download_key = None
     _active_tier = None
     _visible_channel = None
@@ -129,6 +132,18 @@ def note_playhead(channel_key: str, msg_id: int, block_idx: int) -> None:
     global _pin
     _pin = (channel_key, msg_id, block_idx)
     _work_available.set()
+
+
+def set_priority(channel_key: str, msg_id: int) -> None:
+    """Set the one-slot priority job and wake the worker for it."""
+    global _priority
+    _priority = (channel_key, msg_id)
+    _work_available.set()
+
+
+def clear_priority() -> None:
+    global _priority
+    _priority = None
 
 
 def set_visible(channel_key: str, msg_ids: list[int]) -> None:
@@ -245,6 +260,8 @@ async def run_worker_download(channel_key: str, msg, idx: int) -> None:
     except asyncio.CancelledError:
         if asyncio.current_task().cancelling():
             raise
+        if _active_tier == "visible" and visible_pass_still_on(channel_key, msg.id):
+            _visible_blocks.insert(0, idx)
     except Exception:
         _failed_keys.add((msg.id, idx))
         report_error(f"worker block {msg.id}/{idx}")
@@ -262,6 +279,10 @@ async def select_worker_job():
     if pin_job is not None:
         _active_tier = "pin"
         return pin_job
+    priority_job = await select_priority_job()
+    if priority_job is not None:
+        _active_tier = "priority"
+        return priority_job
     visible_job = await select_visible_job()
     if visible_job is not None:
         _active_tier = "visible"
@@ -275,8 +296,12 @@ async def select_worker_job():
 
 
 async def select_pin_job():
+    global _pin
     while _pin is not None:
         channel_key, msg_id, _ = _pin
+        if channels.active_key() != channel_key:
+            _pin = None
+            return None
         try:
             msg = await telegram.get_message(msg_id)
         except Exception:
@@ -302,6 +327,44 @@ async def select_pin_job():
             return None
         return channel_key, msg, idx
     return None
+
+
+# --- priority (one-slot, jump the queue) ---
+
+
+async def select_priority_job():
+    while _priority is not None:
+        channel_key, msg_id = _priority
+        if channels.active_key() != channel_key:
+            clear_priority()
+            return None
+        try:
+            msg = await telegram.get_message(msg_id)
+        except Exception:
+            report_error(f"resolving priority video {msg_id}")
+            return None
+        if _priority is None:
+            return None
+        if _priority != (channel_key, msg_id):
+            continue
+        if not msg or not msg.file:
+            clear_priority()
+            return None
+        if msg.file.size > cache.MAX_BYTES:
+            clear_priority()
+            continue
+        idx = select_priority_block(channel_key, msg_id, msg.file.size)
+        if idx is None:
+            clear_priority()
+            continue
+        return channel_key, msg, idx
+    return None
+
+
+def select_priority_block(channel_key: str, msg_id: int, file_size: int) -> int | None:
+    """Choose the first missing block from the start of the file."""
+    blocks, _ = build_uncached_blocks(channel_key, msg_id, file_size)
+    return blocks[0] if blocks else None
 
 
 # --- visible pass ---
@@ -373,6 +436,22 @@ def active_visible_channel() -> str | None:
     if channel_key is None or channel_key != _visible_channel:
         return None
     return channel_key
+
+
+def visible_pass_still_on(channel_key: str, msg_id: int) -> bool:
+    """True while the visible walk has not moved past the given video.
+
+    A cancelled visible-tier download must only requeue its block into
+    _visible_blocks when that list still belongs to the same video: a
+    concurrent set_visible() resets _visible_message/_visible_blocks without
+    cancelling an in-flight download, so a later cancellation must not
+    re-add a stale index onto a reset (or already-reassigned) walk.
+    """
+    return (
+        _visible_message is not None
+        and _visible_message.id == msg_id
+        and active_visible_channel() == channel_key
+    )
 
 
 def reset_visible_pass() -> None:

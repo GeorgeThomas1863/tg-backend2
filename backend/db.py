@@ -40,3 +40,10 @@ def settings_collection():
     if _client is None:
         raise RuntimeError("MongoDB is not connected")
     return _client[DB_NAME]["settings"]
+
+
+def postdata_collection():
+    """Return the postData1 forward-log collection."""
+    if _client is None:
+        raise RuntimeError("MongoDB is not connected")
+    return _client[DB_NAME]["postData1"]

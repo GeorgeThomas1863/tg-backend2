@@ -175,6 +175,7 @@ def install_fakes(monkeypatch, tmp_path, pages, sizes, max_bytes=10_000):
     prefetch._urgent_empty.set()
     prefetch._work_available = asyncio.Event()
     prefetch._pin = None
+    prefetch._priority = None
     prefetch._worker_task = None
     prefetch._worker_download_task = None
     prefetch._worker_download_key = None

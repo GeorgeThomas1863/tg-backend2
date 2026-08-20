@@ -84,6 +84,24 @@ describe("fetchVideos", () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=25&offset=100`);
   });
+
+  test("appends search only when provided", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ videos: [], total: 0 }) });
+
+    await fetchVideos({ limit: 50, search: "sunset" });
+    await fetchVideos({ limit: 50 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=50&search=sunset`);
+    expect(fetchMock.mock.calls[1][0]).toBe(`${BASE}/api/videos?limit=50`);
+  });
+
+  test("combines search with offset for paged search results", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ videos: [], total: 0 }) });
+
+    await fetchVideos({ limit: 50, offset: 50, search: "sunset" });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=50&offset=50&search=sunset`);
+  });
 });
 
 describe("fetchCacheStatus", () => {

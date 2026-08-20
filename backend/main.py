@@ -25,6 +25,7 @@ import settings
 import streaming
 import telegram
 import tg_auth
+import video_metadata
 from config import (
     AUTH_MAX_ATTEMPTS,
     AUTH_WINDOW_SECONDS,
@@ -99,6 +100,10 @@ class CachePausedBody(BaseModel):
 
 class VisibleVideosBody(BaseModel):
     ids: list[int]
+
+
+class PriorityVideoBody(BaseModel):
+    id: int
 
 
 class CacheSettingsBody(BaseModel):
@@ -245,6 +250,15 @@ async def set_visible_videos(body: VisibleVideosBody):
         return {"success": False, "message": "No active channel"}
     prefetch.set_visible(channel_key, body.ids)
     return {"success": True, "message": f"Tracking {len(body.ids)} visible videos"}
+
+
+@app.post("/api/prefetch/priority", dependencies=[Depends(require_auth)])
+async def set_priority_video(body: PriorityVideoBody):
+    channel_key = channels.active_key()
+    if channel_key is None:
+        return {"success": False, "message": "No active channel"}
+    prefetch.set_priority(channel_key, body.id)
+    return {"success": True, "message": f"Prioritizing video {body.id}"}
 
 
 @app.post("/api/cache/clear", dependencies=[Depends(require_auth)])
@@ -404,7 +418,18 @@ async def videos(
     before_id: int | None = None,
     offset: int = Query(default=0, ge=0),
     category: str | None = None,
+    search: str | None = None,
 ):
+    """List videos, or (when `search` is set) text-search captions instead —
+    before_id and category are ignored in search mode."""
+    search = search.strip() if search else None
+    if search:
+        result = await video_metadata.search_videos(search, limit, offset)
+        if result is None:
+            raise HTTPException(status_code=502, detail="Search request failed")
+        video_items, total, next_offset = result
+        return {"videos": video_items, "total": total, "next_offset": next_offset}
+
     category_bounds = _resolve_category(category)
     if category_bounds is None:
         result = await telegram.list_videos_with_total(
@@ -424,6 +449,7 @@ async def videos(
     if result is None:
         raise HTTPException(status_code=502, detail="Telegram request failed")
     video_items, total = result
+    video_items = await video_metadata.enrich_videos(video_items)
     if category is not None:
         total = await _get_category_count(category)
     return {"videos": video_items, "total": total}

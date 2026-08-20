@@ -69,14 +69,21 @@ describe("CategoryBar", () => {
     expect(rows[1]).toHaveTextContent("Kink");
     expect(rows[1]).toHaveTextContent("5,390");
     expect(rows[1]).toHaveTextContent("10140–16680");
-    expect(rows[1].textContent.startsWith("10140–16680")).toBe(true);
-    expect(rows[1].textContent.endsWith("5,390")).toBe(true);
     expect(rows[2]).toHaveTextContent("Hogtied");
     expect(rows[2]).toHaveTextContent("980");
     expect(rows[2]).toHaveTextContent("13445–14430");
     expect(rows[3]).toHaveTextContent("NudeFightClub");
     expect(rows[3]).toHaveClass("category-row-nested");
     expect(rows[4]).toHaveTextContent("Combat");
+  });
+
+  test("orders row spans as name, count, then range", () => {
+    renderBar();
+    openDropdown();
+
+    const kinkRow = screen.getByRole("option", { name: /Kink/ });
+    const spanClasses = [...kinkRow.querySelectorAll("span")].map((span) => span.className);
+    expect(spanClasses).toEqual(["category-row-name", "category-row-count", "category-row-range"]);
   });
 
   test("search keeps a matching sub and its major while hiding unrelated rows", () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useVideos } from "./hooks/useVideos";
 import { useSentinel } from "./hooks/useSentinel";
 import { useVisibleVideos } from "./hooks/useVisibleVideos";
@@ -14,6 +14,8 @@ import { JumpControls } from "./components/JumpControls";
 import { TelegramAuthDrawer } from "./components/TelegramAuthDrawer";
 import { CategoryBar } from "./components/CategoryBar";
 import { formatSize } from "./format";
+
+const SEARCH_DEBOUNCE_MS = 300;
 
 export default function App() {
   const registry = useChannels();
@@ -89,9 +91,11 @@ export default function App() {
 
 function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, onOpenTelegram }) {
   const [selectedCategory, setSelectedCategory] = useState(null);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchTerm, setSearchTerm] = useDebouncedValue(searchInput.trim(), SEARCH_DEBOUNCE_MS);
   const categoryData = useCategories();
   const selectedCategoryData = findCategory(categoryData.categories, selectedCategory);
-  const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos(50, selectedCategory);
+  const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos(50, selectedCategory, searchTerm);
   const { status, speedBps, togglePaused, saveSettings, clearCache } = useCacheStatus(!loading && !unauthorized && !error);
   const [expandedId, setExpandedId] = useState(null);
   const [cacheDrawerOpen, setCacheDrawerOpen] = useState(false);
@@ -101,6 +105,10 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
   const jumpToPosition = (offset) => {
     setExpandedId(null);
     jumpTo(offset);
+  };
+  const clearSearch = () => {
+    setSearchInput("");
+    setSearchTerm("");
   };
 
   if (loading) return <div className="page page-status">Loading…</div>;
@@ -138,12 +146,15 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
           <TelegramTrigger label={telegramLabel} onClick={onOpenTelegram} />
         </div>
       </header>
-      <CategoryBar
-        categories={categoryData.categories}
-        loading={categoryData.loading}
-        selectedKey={selectedCategory}
-        onSelect={setSelectedCategory}
-      />
+      <div className="category-bar-row">
+        <CategoryBar
+          categories={categoryData.categories}
+          loading={categoryData.loading}
+          selectedKey={selectedCategory}
+          onSelect={setSelectedCategory}
+        />
+        <VideoSearchInput value={searchInput} onChange={setSearchInput} onClear={clearSearch} />
+      </div>
       <main key={selectedCategory || "all-videos"}>
         {videos.length === 0
           ? <div className="page-status">No videos found.</div>
@@ -182,6 +193,40 @@ function LoggedOutLibrary({ telegramLabel, onOpenTelegram }) {
 
 function TelegramTrigger({ label, onClick }) {
   return <button className="telegram-header-btn" type="button" onClick={onClick}>{label} ▸</button>;
+}
+
+function VideoSearchInput({ value, onChange, onClear }) {
+  return (
+    <div className="video-search-wrap">
+      <input
+        type="search"
+        className="video-search-input"
+        placeholder="Search captions…"
+        aria-label="Search videos"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {value && (
+        <button type="button" className="video-search-clear" aria-label="Clear search" onClick={onClear}>
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Debounces rawValue by delayMs (useHoverPreview's timer-effect pattern).
+// Returns [debounced, setDebounced] so callers can also force an immediate
+// value (e.g. a clear button) without waiting out the delay.
+function useDebouncedValue(rawValue, delayMs) {
+  const [debounced, setDebounced] = useState(rawValue);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(rawValue), delayMs);
+    return () => clearTimeout(timer);
+  }, [rawValue, delayMs]);
+
+  return [debounced, setDebounced];
 }
 
 function buildTelegramLabel(status) {

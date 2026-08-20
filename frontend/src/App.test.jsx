@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import App from "./App";
 import { useTelegramAuth } from "./hooks/useTelegramAuth";
 import { useVideos } from "./hooks/useVideos";
@@ -61,5 +61,44 @@ describe("App Telegram gate", () => {
     expect(screen.getByText("Error loading Telegram status: HTTP 502")).toBeInTheDocument();
     expect(screen.queryByText(/Telegram is logged out/)).not.toBeInTheDocument();
     expect(useVideos).not.toHaveBeenCalled();
+  });
+});
+
+describe("App search input", () => {
+  const authorizedStatus = { authorized: true, user: { username: "alice" }, pending_step: null };
+
+  afterEach(() => vi.useRealTimers());
+
+  test("typing debounces 300ms before it reaches useVideos as the search term", () => {
+    vi.useFakeTimers();
+    useTelegramAuth.mockReturnValue({ ...telegramBase, status: authorizedStatus });
+    render(<App />);
+
+    const search = screen.getByRole("searchbox", { name: "Search videos" });
+    fireEvent.change(search, { target: { value: "sunset" } });
+
+    expect(useVideos).toHaveBeenLastCalledWith(50, null, "");
+
+    act(() => vi.advanceTimersByTime(299));
+    expect(useVideos).toHaveBeenLastCalledWith(50, null, "");
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(useVideos).toHaveBeenLastCalledWith(50, null, "sunset");
+  });
+
+  test("the clear button resets the search immediately, without waiting for the debounce", () => {
+    vi.useFakeTimers();
+    useTelegramAuth.mockReturnValue({ ...telegramBase, status: authorizedStatus });
+    render(<App />);
+
+    const search = screen.getByRole("searchbox", { name: "Search videos" });
+    fireEvent.change(search, { target: { value: "sunset" } });
+    act(() => vi.advanceTimersByTime(300));
+    expect(useVideos).toHaveBeenLastCalledWith(50, null, "sunset");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(search.value).toBe("");
+    expect(useVideos).toHaveBeenLastCalledWith(50, null, "");
   });
 });
