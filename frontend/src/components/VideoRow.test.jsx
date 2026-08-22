@@ -1,6 +1,6 @@
 import { describe, test, expect, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
-import { VideoRow } from "./VideoRow";
+import { PREVIEW_POPUP_WIDTH, VideoRow } from "./VideoRow";
 import * as hoverPreviewModule from "../hooks/useHoverPreview";
 
 // No api-client mock: streamUrl/thumbUrl read the VITE_API_BASE pinned in
@@ -14,6 +14,9 @@ const video = {
 };
 
 describe("VideoRow", () => {
+  test("uses a 720px preview popup width", () => {
+    expect(PREVIEW_POPUP_WIDTH).toBe(720);
+  });
   test("does NOT mount VideoPlayer when collapsed and mounts it when expanded — only one stream open at a time", () => {
     const { container, rerender } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
 
@@ -113,25 +116,78 @@ describe("VideoRow", () => {
     vi.useRealTimers();
   });
 
-  // Regression test: at narrow viewports the popup's rendered width shrinks
-  // (index.css clamps to min(360px, 100vw - 24px)), so the position math must
-  // shrink its width assumption too or the left clamp's bounds invert and
-  // push the popup off the left edge (see computePopupPosition).
-  test("narrow viewport keeps the popup's left position on-screen", () => {
-    const originalInnerWidth = window.innerWidth;
-    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 360 });
+  test("clicking at 25% seeks to 25% and does not toggle the row", () => {
+    vi.useFakeTimers();
+    const onToggle = vi.fn();
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={onToggle} />);
+    fireEvent.mouseOver(container.querySelector(".row-header"));
+    act(() => vi.advanceTimersByTime(300));
+    const preview = document.body.querySelector(".preview-popup-video");
+    Object.defineProperty(preview, "duration", { configurable: true, value: 400 });
+    preview.getBoundingClientRect = () => ({ left: 100, width: 720 });
+    fireEvent.click(preview, { clientX: 280 });
+    expect(preview.currentTime).toBe(100);
+    expect(onToggle).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  test("progress bar tracks timeupdate using the video prop duration fallback", () => {
+    vi.useFakeTimers();
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+    fireEvent.mouseOver(container.querySelector(".row-header"));
+    act(() => vi.advanceTimersByTime(300));
+    const preview = document.body.querySelector(".preview-popup-video");
+    Object.defineProperty(preview, "duration", { configurable: true, value: Number.NaN });
+    preview.currentTime = video.duration / 4;
+    fireEvent.timeUpdate(preview);
+    expect(document.body.querySelector(".preview-popup-progress-fill").style.width).toBe("25%");
+    vi.useRealTimers();
+  });
+
+  // Regression test: at small viewports the popup renders smaller than its
+  // 720px desktop size (index.css: width min(720px, 100vw - 24px) with a 16/9
+  // aspect-ratio), so the position math must shrink both its width and height
+  // assumptions. Otherwise a clamp's bounds invert and push the popup off the
+  // left or top edge (see computePopupPosition).
+  test("small viewport clamps the popup to its rendered 336x189 size, not the 720x405 desktop size", () => {
+    const restoreViewport = setViewport(360, 360);
     vi.useFakeTimers();
 
     const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
-    fireEvent.mouseOver(container.querySelector(".row-header"));
+    const header = container.querySelector(".row-header");
+    // A row near the bottom edge: the popup must be pushed up just far enough
+    // for its real 189px height to fit (360 - 12 - 189 = 159). Assuming the
+    // desktop 405px height instead leaves it wrongly pinned to the top gap.
+    header.getBoundingClientRect = () => ({ top: 300, left: 20, width: 200, height: 40, right: 220, bottom: 340 });
+    fireEvent.mouseOver(header);
     act(() => vi.advanceTimersByTime(300));
 
     const popup = document.body.querySelector(".preview-popup");
     expect(popup).not.toBeNull();
-    expect(parseFloat(popup.style.left)).toBeGreaterThanOrEqual(12);
+    expect(popup.style.top).toBe("159px");
+    expect(popup.style.left).toBe("12px");
 
     vi.useRealTimers();
-    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: originalInnerWidth });
+    restoreViewport();
+  });
+
+  test("a popup taller than the viewport keeps its top edge on-screen", () => {
+    // Landscape-phone shape: full 720x405 popup, but only 360px of height.
+    const restoreViewport = setViewport(800, 360);
+    vi.useFakeTimers();
+
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+    const header = container.querySelector(".row-header");
+    header.getBoundingClientRect = () => ({ top: 100, left: 20, width: 200, height: 40, right: 220, bottom: 140 });
+    fireEvent.mouseOver(header);
+    act(() => vi.advanceTimersByTime(300));
+
+    const popup = document.body.querySelector(".preview-popup");
+    expect(popup).not.toBeNull();
+    expect(popup.style.top).toBe("12px");
+
+    vi.useRealTimers();
+    restoreViewport();
   });
 
   // Regression test: the popup's coordinates used to be computed only at the
@@ -153,7 +209,7 @@ describe("VideoRow", () => {
     act(() => vi.advanceTimersByTime(300));
 
     const popup = document.body.querySelector(".preview-popup");
-    expect(popup.style.top).toBe("18.75px");
+    expect(popup.style.top).toBe("12px");
     expect(popup.style.left).toBe("128px");
 
     rectMock.mockReturnValue({ top: 500, left: 60, width: 200, height: 40, right: 260, bottom: 540 });
@@ -163,13 +219,13 @@ describe("VideoRow", () => {
     });
 
     const updated = document.body.querySelector(".preview-popup");
-    expect(updated.style.top).toBe("418.75px");
+    expect(updated.style.top).toBe("317.5px");
     expect(updated.style.left).toBe("168px");
 
     vi.useRealTimers();
   });
 
-  test("unhovering removes the popup and the thumb img stays in place", () => {
+  test("unhovering removes the popup after grace and the thumb img stays in place", () => {
     vi.useFakeTimers();
     const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
 
@@ -177,6 +233,8 @@ describe("VideoRow", () => {
     act(() => vi.advanceTimersByTime(300));
     fireEvent.mouseOut(container.querySelector(".row-header"));
 
+    expect(document.body.querySelector(".preview-popup")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(150));
     expect(document.body.querySelector(".preview-popup")).toBeNull();
     expect(container.querySelector("img.row-thumb")).not.toBeNull();
     vi.useRealTimers();
@@ -205,6 +263,8 @@ describe("VideoRow", () => {
       previewing: true,
       onMouseEnter: vi.fn(),
       onMouseLeave: vi.fn(),
+      onPopupEnter: vi.fn(),
+      onPopupLeave: vi.fn(),
     });
 
     const { container } = render(<VideoRow video={video} isExpanded={true} onToggle={vi.fn()} />);
@@ -273,3 +333,17 @@ describe("VideoRow", () => {
     expect(container.textContent).not.toMatch(/null|undefined|NaN/);
   });
 });
+
+//---
+
+// Overrides window.innerWidth/innerHeight for one test; returns a restore fn.
+function setViewport(width, height) {
+  const originalWidth = window.innerWidth;
+  const originalHeight = window.innerHeight;
+  Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: width });
+  Object.defineProperty(window, "innerHeight", { writable: true, configurable: true, value: height });
+  return () => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: originalWidth });
+    Object.defineProperty(window, "innerHeight", { writable: true, configurable: true, value: originalHeight });
+  };
+}

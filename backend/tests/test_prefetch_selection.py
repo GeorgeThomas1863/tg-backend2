@@ -1,6 +1,7 @@
 """Pure selection behavior for pinned and prewarm background jobs."""
 
 import asyncio
+import os
 from types import SimpleNamespace
 
 import cache
@@ -229,12 +230,12 @@ async def test_complete_pin_falls_through_to_prewarm(tmp_path, monkeypatch):
     install_world(tmp_path, monkeypatch)
     msg = make_msg(7, BLOCK_SIZE)
     cache.write_block("test", 7, 0, b"x" * BLOCK_SIZE)
-    prewarm_job = (make_msg(9, BLOCK_SIZE), 0)
+    prewarm_job = ("test", make_msg(9, BLOCK_SIZE), 0)
 
     async def get_message(msg_id):
         return msg
 
-    async def select_prewarm_job():
+    async def select_prewarm_job(slot=0):
         return prewarm_job
 
     monkeypatch.setattr(telegram, "get_message", get_message)
@@ -302,6 +303,85 @@ async def test_prewarm_cap_counts_only_partially_cached_remainder(
     selected_msg, blocks = await prefetch.find_next_prewarm_video()
 
     assert (selected_msg.id, blocks) == (12, [1, 2])
+
+
+async def test_busy_visible_video_keeps_budget_for_owning_slot(monkeypatch):
+    install_world(cache.CACHE_ROOT, monkeypatch)
+    messages = {
+        1: make_msg(1, 2 * BLOCK_SIZE),
+        2: make_msg(2, BLOCK_SIZE),
+        3: make_msg(3, BLOCK_SIZE),
+    }
+    monkeypatch.setattr(cache, "MAX_BYTES", 3 * BLOCK_SIZE)
+
+    async def get_message(msg_id):
+        return messages[msg_id]
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.initialize_slots()
+    prefetch._slot_msg_ids[0] = 1
+    prefetch.set_visible("test", [1, 2, 3])
+
+    slot_b_job = await prefetch.select_visible_job(1)
+    slot_b_next_job = await prefetch.select_visible_job(1)
+    slot_a_job = await prefetch.replan_current_visible_video("test", 1, 0)
+
+    assert slot_b_job == ("test", messages[2], 0)
+    assert slot_b_next_job is None
+    assert slot_a_job == ("test", messages[1], 0)
+
+
+async def test_visible_download_evicts_older_unseen_blocks_before_cached_visible_ones(
+    tmp_path, monkeypatch
+):
+    # Regression: cache holds visible A (the oldest block) plus unrelated X,
+    # and the cap fits exactly two blocks. Planning the visible set must refresh
+    # A's LRU age so downloading visible B evicts X, not A — otherwise the
+    # visible pass evicts a video the user is looking at.
+    install_world(tmp_path, monkeypatch)
+    messages = {1: make_msg(1, BLOCK_SIZE), 2: make_msg(2, BLOCK_SIZE)}
+    monkeypatch.setattr(cache, "MAX_BYTES", 2 * BLOCK_SIZE)
+    cache.write_block("test", 1, 0, b"a" * BLOCK_SIZE)
+    cache.write_block("test", 9, 0, b"x" * BLOCK_SIZE)
+    os.utime(cache.build_block_path("test", 1, 0), (1_000, 1_000))
+    os.utime(cache.build_block_path("test", 9, 0), (2_000, 2_000))
+
+    async def get_message(msg_id):
+        return messages[msg_id]
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.initialize_slots()
+    prefetch.set_visible("test", [1, 2])
+
+    job = await prefetch.select_visible_job(0)
+    cache.write_block("test", 2, 0, b"b" * BLOCK_SIZE)
+
+    assert job == ("test", messages[2], 0)
+    assert cache.has_block("test", 1, 0)
+    assert cache.has_block("test", 2, 0)
+    assert not cache.has_block("test", 9, 0)
+
+
+async def test_visible_lookup_does_not_reserve_for_stale_pass(monkeypatch):
+    install_world(cache.CACHE_ROOT, monkeypatch)
+    messages = {
+        1: make_msg(1, BLOCK_SIZE),
+        2: make_msg(2, BLOCK_SIZE),
+    }
+    monkeypatch.setattr(cache, "MAX_BYTES", BLOCK_SIZE)
+
+    async def get_message(msg_id):
+        if msg_id == 1:
+            prefetch.set_visible("test", [2])
+        return messages[msg_id]
+
+    monkeypatch.setattr(telegram, "get_message", get_message)
+    prefetch.set_visible("test", [1])
+
+    selected_msg, blocks = await prefetch.find_next_visible_video()
+
+    assert (selected_msg.id, blocks) == (2, [0])
+    assert prefetch._visible_budget_ids == {2}
 
 
 # --- helpers ---

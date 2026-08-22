@@ -114,7 +114,10 @@ async def test_cancelled_visible_download_requeues_its_block(tmp_path, monkeypat
     prefetch._visible_channel = "test"
     prefetch._visible_message = world["messages"][1]
     prefetch._visible_blocks = [2]
+    prefetch._visible_messages = {1: world["messages"][1]}
+    prefetch._visible_blocks_by_id = {1: [2]}
     prefetch._active_tier = "visible"
+    prefetch._active_tiers[0] = "visible"
     idx = 1
 
     download = asyncio.create_task(
@@ -128,7 +131,7 @@ async def test_cancelled_visible_download_requeues_its_block(tmp_path, monkeypat
     await wait_until(lambda: (1, idx, 1) in world["cancelled"])
     await download
 
-    assert prefetch._visible_blocks == [idx, 2]
+    assert prefetch._visible_blocks_by_id[1] == [idx, 2]
 
     world["gates"][(2, 0, 1)].set()
     await urgent
@@ -144,6 +147,7 @@ async def test_visible_reset_during_cancel_does_not_reinsert_stale_block(
     prefetch._visible_message = world["messages"][1]
     prefetch._visible_blocks = [2]
     prefetch._active_tier = "visible"
+    prefetch._active_tiers[0] = "visible"
     idx = 1
 
     download = asyncio.create_task(
@@ -178,6 +182,7 @@ async def test_stop_mid_visible_download_propagates_cancel_without_requeue(
     prefetch._visible_message = world["messages"][1]
     prefetch._visible_blocks = [2]
     prefetch._active_tier = "visible"
+    prefetch._active_tiers[0] = "visible"
     idx = 1
 
     # Wrapping run_worker_download in its own task and cancelling that task
@@ -274,6 +279,118 @@ async def test_disabled_prewarm_still_runs_pin_tier(tmp_path, monkeypatch):
     assert world["calls"] == [(1, 0)]
 
 
+async def test_two_slots_download_distinct_visible_videos(tmp_path, monkeypatch):
+    world = install_world(tmp_path, monkeypatch, [make_msg(1), make_msg(2)])
+    monkeypatch.setattr(config, "PREFETCH_SLOTS", 2)
+    prefetch.set_visible("test", [1, 2])
+
+    await prefetch.start()
+    try:
+        await asyncio.wait_for(
+            wait_for_calls(world, {(1, 0), (2, 0)}), timeout=1
+        )
+        assert prefetch.status()["active_slots"] == [
+            {"msg_id": 1, "tier": "visible"},
+            {"msg_id": 2, "tier": "visible"},
+        ]
+    finally:
+        await asyncio.wait_for(prefetch.stop(), timeout=1)
+
+
+async def test_second_slot_idles_for_one_visible_video(tmp_path, monkeypatch):
+    world = install_world(tmp_path, monkeypatch, [make_msg(1, 2 * BLOCK_SIZE)])
+    monkeypatch.setattr(config, "PREFETCH_SLOTS", 2)
+    prefetch.set_visible("test", [1])
+
+    await prefetch.start()
+    try:
+        await asyncio.wait_for(wait_for_calls(world, {(1, 0)}), timeout=1)
+        await yield_many()
+        assert world["calls"] == [(1, 0)]
+        assert len(prefetch.status()["active_slots"]) == 1
+    finally:
+        await asyncio.wait_for(prefetch.stop(), timeout=1)
+
+
+async def test_visible_reset_replans_video_owned_by_active_slot(
+    tmp_path, monkeypatch
+):
+    world = install_world(
+        tmp_path, monkeypatch, [make_msg(1, 3 * BLOCK_SIZE)]
+    )
+    monkeypatch.setattr(config, "PREFETCH_SLOTS", 2)
+    prefetch.set_visible("test", [1])
+
+    await prefetch.start()
+    try:
+        await asyncio.wait_for(wait_for_calls(world, {(1, 0)}), timeout=1)
+        prefetch.set_visible("test", [1])
+        await asyncio.wait_for(
+            wait_until(lambda: prefetch._visible_index == 1), timeout=1
+        )
+
+        world["gates"][(1, 0, 1)].set()
+        await asyncio.wait_for(wait_for_calls(world, {(1, 1)}), timeout=1)
+        world["gates"][(1, 1, 1)].set()
+        await asyncio.wait_for(wait_for_calls(world, {(1, 2)}), timeout=1)
+        world["gates"][(1, 2, 1)].set()
+        await asyncio.wait_for(
+            wait_until(lambda: cache.has_block("test", 1, 2)), timeout=1
+        )
+
+        assert world["calls"] == [(1, 0), (1, 1), (1, 2)]
+    finally:
+        await asyncio.wait_for(prefetch.stop(), timeout=1)
+
+
+async def test_concurrent_slots_share_prewarm_page_and_choose_distinct_videos(
+    tmp_path, monkeypatch
+):
+    world = install_world(
+        tmp_path, monkeypatch, [make_msg(1), make_msg(2)]
+    )
+    monkeypatch.setattr(config, "PREWARM_ENABLED", True)
+    monkeypatch.setattr(config, "PREFETCH_SLOTS", 2)
+    prefetch.initialize_slots()
+    page_requested = asyncio.Event()
+    release_page = asyncio.Event()
+    list_calls = []
+
+    async def list_videos(limit, before_id):
+        list_calls.append((limit, before_id))
+        page_requested.set()
+        await release_page.wait()
+        return [{"id": 1}, {"id": 2}]
+
+    monkeypatch.setattr(telegram, "list_videos", list_videos)
+    first = asyncio.create_task(prefetch.select_worker_job(0))
+    second = None
+    try:
+        await asyncio.wait_for(page_requested.wait(), timeout=1)
+        second = asyncio.create_task(prefetch.select_worker_job(1))
+        await yield_many()
+        release_page.set()
+        jobs = await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
+
+        assert list_calls == [(50, None)]
+        assert [job[1].id for job in jobs] == [1, 2]
+    finally:
+        release_page.set()
+        tasks = [first]
+        if second is not None:
+            tasks.append(second)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        prefetch.initialize_slots()
+
+
+async def wait_for_calls(world, expected):
+    while not expected.issubset(set(world["calls"])):
+        await asyncio.sleep(0)
+
+
 async def test_paused_worker_selects_no_job(tmp_path, monkeypatch):
     install_world(tmp_path, monkeypatch, [make_msg(1)])
     monkeypatch.setattr(config, "PREWARM_ENABLED", True)
@@ -316,16 +433,16 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
     pin_job = ("test", make_msg(1), 0)
     prewarm_job = ("test", make_msg(2), 0)
 
-    async def select_pin():
+    async def select_pin(slot=0):
         return pin_job
 
-    async def select_no_pin():
+    async def select_no_pin(slot=0):
         return None
 
-    async def select_prewarm():
+    async def select_prewarm(slot=0):
         return prewarm_job
 
-    assert prefetch.status() == {"paused": False, "active": None}
+    assert prefetch.status() == {"paused": False, "active": None, "active_slots": []}
 
     monkeypatch.setattr(prefetch, "select_pin_job", select_pin)
     assert await prefetch.select_worker_job() == pin_job
@@ -333,6 +450,7 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
     assert prefetch.status() == {
         "paused": False,
         "active": {"msg_id": 1, "tier": "pin"},
+        "active_slots": [{"msg_id": 1, "tier": "pin"}],
     }
 
     prefetch._worker_download_key = None
@@ -344,12 +462,14 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
     assert prefetch.status() == {
         "paused": False,
         "active": {"msg_id": 2, "tier": "prewarm"},
+        "active_slots": [{"msg_id": 2, "tier": "prewarm"}],
     }
 
     prefetch.set_paused(True)
     assert prefetch.status() == {
         "paused": True,
         "active": {"msg_id": 2, "tier": "prewarm"},
+        "active_slots": [{"msg_id": 2, "tier": "prewarm"}],
     }
 
 
@@ -406,6 +526,7 @@ def install_world(tmp_path, monkeypatch, messages, outcomes=None):
 
 
 def reset_prefetch_state(monkeypatch):
+    monkeypatch.setattr(prefetch, "_select_lock", asyncio.Lock())
     prefetch._block_locks.clear()
     prefetch._urgent_keys.clear()
     prefetch._urgent_empty = asyncio.Event()

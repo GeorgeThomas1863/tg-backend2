@@ -91,6 +91,25 @@ def has_block(channel_key: str, msg_id: int, block_idx: int) -> bool:
     return build_block_path(channel_key, msg_id, block_idx).exists()
 
 
+def touch_video_blocks(channel_key: str, msg_id: int) -> None:
+    """Refresh the LRU age of every cached block of one video."""
+    video_dir = build_block_path(channel_key, msg_id, 0).parent
+    if not video_dir.is_dir():
+        return
+    try:
+        for path in video_dir.glob("*.blk"):
+            touch_block_file(path)
+    except OSError:
+        report_error(f"touching blocks of {msg_id}")
+
+
+def touch_block_file(path: Path) -> None:
+    try:
+        os.utime(path)
+    except OSError:
+        return
+
+
 # --- thumbs ---
 
 

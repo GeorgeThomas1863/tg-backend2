@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useVideos } from "./hooks/useVideos";
 import { useSentinel } from "./hooks/useSentinel";
 import { useVisibleVideos } from "./hooks/useVisibleVideos";
-import { useCacheStatus } from "./hooks/useCacheStatus";
+import { isVideoDownloading, useCacheStatus } from "./hooks/useCacheStatus";
 import { useChannels } from "./hooks/useChannels";
 import { useTelegramAuth } from "./hooks/useTelegramAuth";
 import { useCategories } from "./hooks/useCategories";
@@ -241,7 +241,7 @@ const buildRowList = (videos, expandedId, toggleRow, status, observeRow) => vide
     isExpanded={video.id === expandedId}
     onToggle={toggleRow}
     cachedBytes={status?.videos?.[String(video.id)] || 0}
-    isDownloading={status?.active?.msg_id === video.id}
+    isDownloading={isVideoDownloading(status, video.id)}
     paused={Boolean(status?.paused)}
     rowRef={observeRow(video.id)}
   />

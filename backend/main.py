@@ -223,6 +223,7 @@ async def cache_status():
         "max_bytes": cache.MAX_BYTES,
         "paused": worker["paused"],
         "active": worker["active"],
+        "active_slots": worker["active_slots"],
         "videos": cache.video_totals(),
         "cache_dir": effective_settings["cache_dir"],
         "max_gb": effective_settings["cache_max_gb"],

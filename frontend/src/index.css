@@ -225,14 +225,13 @@ button {
 
 .preview-popup {
   position: fixed;
-  width: 360px;
+  width: min(720px, calc(100vw - 24px));
   aspect-ratio: 16 / 9;
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(32, 33, 36, 0.15);
   background: #000;
   overflow: hidden;
   z-index: 11;
-  pointer-events: none;
 }
 
 .preview-popup-video {
@@ -240,6 +239,22 @@ button {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  cursor: pointer;
+}
+
+.preview-popup-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+}
+
+.preview-popup-progress-fill {
+  height: 100%;
+  background: var(--green);
 }
 
 .row-title-wrap {
@@ -963,13 +978,6 @@ button {
 
   .cache-strip {
     padding: 8px 6px 10px;
-  }
-
-  /* Clamp the hover-preview popup so its fixed 360px width can never
-     overflow a narrow phone viewport (popup only ever shows on hover,
-     but width math shouldn't assume a desktop-sized window). */
-  .preview-popup {
-    width: min(360px, calc(100vw - 24px));
   }
 
   .player-meta {

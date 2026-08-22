@@ -27,6 +27,31 @@ describe("useHoverPreview", () => {
     expect(result.current.previewing).toBe(false);
   });
 
+  test("leaving an open row and entering the popup during grace keeps it open", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useHoverPreview(false));
+    act(() => result.current.onMouseEnter());
+    act(() => vi.advanceTimersByTime(300));
+    act(() => result.current.onMouseLeave());
+    act(() => vi.advanceTimersByTime(149));
+    act(() => result.current.onPopupEnter());
+    act(() => vi.advanceTimersByTime(300));
+    expect(result.current.previewing).toBe(true);
+  });
+
+  test("leaving the popup closes an open preview after the grace delay", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useHoverPreview(false));
+    act(() => result.current.onMouseEnter());
+    act(() => vi.advanceTimersByTime(300));
+    act(() => result.current.onPopupEnter());
+    act(() => result.current.onPopupLeave());
+    act(() => vi.advanceTimersByTime(149));
+    expect(result.current.previewing).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
+    expect(result.current.previewing).toBe(false);
+  });
+
   test("disabled hook never starts a preview", () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useHoverPreview(true));

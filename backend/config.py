@@ -62,6 +62,7 @@ REQUEST_SIZE = 512 * 1024     # 512 KiB; multiple of 4096, valid request_size
 
 # Parallel download + disk cache tuning.
 TG_CONNECTIONS = int(os.environ.get("TG_CONNECTIONS", "4"))
+PREFETCH_SLOTS = int(os.environ.get("PREFETCH_SLOTS", "2"))
 CACHE_DIR = Path(os.environ.get("CACHE_DIR", str(Path(__file__).resolve().parent / "cache")))
 CACHE_MAX_GB = float(os.environ.get("CACHE_MAX_GB", "100"))
 PREWARM_ENABLED = os.environ.get("PREWARM_ENABLED", "1") != "0"
@@ -69,6 +70,8 @@ PREWARM_RESCAN_SECONDS = int(os.environ.get("PREWARM_RESCAN_SECONDS", "600"))
 
 if TG_CONNECTIONS < 0:
     raise ValueError("TG_CONNECTIONS must be >= 0 (0 disables the parallel pool)")
+if PREFETCH_SLOTS < 1:
+    raise ValueError("PREFETCH_SLOTS must be >= 1")
 if CACHE_MAX_GB <= 0:
     raise ValueError("CACHE_MAX_GB must be greater than zero")
 if PREWARM_RESCAN_SECONDS <= 0:

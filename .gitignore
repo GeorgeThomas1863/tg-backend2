@@ -46,6 +46,14 @@ desktop.ini
 .claude/.pics/
 .claude/checks/
 .claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.*
+
+# Superpowers SDD scratch (also self-ignored via nested .gitignore)
+.superpowers/
+
+# Stray logs
+*.log
 
 # Codex CLI per-project config — contains the Mongo connection string
 .codex/

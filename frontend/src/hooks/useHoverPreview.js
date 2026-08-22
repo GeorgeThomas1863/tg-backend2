@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 
 const HOVER_DELAY_MS = 300;
+const CLOSE_GRACE_MS = 150;
 
 // Debounced hover intent for row previews: previewing flips true only after
 // the pointer rests on the row for HOVER_DELAY_MS, so scrolling the list
 // never opens streams. disabled (row expanded) suppresses and cancels.
 export function useHoverPreview(disabled) {
   const [previewing, setPreviewing] = useState(false);
-  const timerRef = useRef(null);
+  const openTimerRef = useRef(null);
+  const closeTimerRef = useRef(null);
   const hoveringRef = useRef(false);
 
   // Re-arm through the same debounce on disabled:true->false (e.g. collapsing
@@ -21,28 +23,61 @@ export function useHoverPreview(disabled) {
     }
     if (hoveringRef.current) startPreviewTimer();
   }, [disabled]);
-  useEffect(() => () => clearTimeout(timerRef.current), []);
+  useEffect(() => () => clearTimers(), []);
 
   function startPreviewTimer() {
-    if (disabled || timerRef.current !== null) return;
-    timerRef.current = setTimeout(() => setPreviewing(true), HOVER_DELAY_MS);
+    if (disabled || openTimerRef.current !== null) return;
+    openTimerRef.current = setTimeout(() => {
+      openTimerRef.current = null;
+      setPreviewing(true);
+    }, HOVER_DELAY_MS);
   }
 
   function stopPreview() {
-    clearTimeout(timerRef.current);
-    timerRef.current = null;
+    clearTimers();
     setPreviewing(false);
+  }
+
+  function clearTimers() {
+    clearTimeout(openTimerRef.current);
+    clearTimeout(closeTimerRef.current);
+    openTimerRef.current = null;
+    closeTimerRef.current = null;
+  }
+
+  function cancelCloseTimer() {
+    clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }
+
+  function scheduleClose() {
+    cancelCloseTimer();
+    closeTimerRef.current = setTimeout(stopPreview, CLOSE_GRACE_MS);
   }
 
   function onMouseEnter() {
     hoveringRef.current = true;
+    cancelCloseTimer();
+    if (previewing) return;
     startPreviewTimer();
   }
 
   function onMouseLeave() {
     hoveringRef.current = false;
-    stopPreview();
+    if (!previewing) {
+      stopPreview();
+      return;
+    }
+    scheduleClose();
   }
 
-  return { previewing, onMouseEnter, onMouseLeave };
+  function onPopupEnter() {
+    cancelCloseTimer();
+  }
+
+  function onPopupLeave() {
+    scheduleClose();
+  }
+
+  return { previewing, onMouseEnter, onMouseLeave, onPopupEnter, onPopupLeave };
 }

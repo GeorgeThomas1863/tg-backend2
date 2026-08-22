@@ -11,19 +11,19 @@ def test_cache_routes_require_authentication(client):
 
 
 @pytest.mark.parametrize(
-    "active",
+    ("active", "active_slots"),
     [
-        None,
-        {"msg_id": 42, "tier": "ahead"},
+        (None, []),
+        ({"msg_id": 42, "tier": "ahead"}, [{"msg_id": 42, "tier": "ahead"}]),
     ],
 )
-def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active):
+def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active, active_slots):
     status_calls = 0
 
     def fake_status():
         nonlocal status_calls
         status_calls += 1
-        return {"paused": True, "active": active}
+        return {"paused": True, "active": active, "active_slots": active_slots}
 
     monkeypatch.setattr(prefetch, "status", fake_status)
     monkeypatch.setattr(cache, "current_total", lambda: 1234)
@@ -43,6 +43,7 @@ def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active):
         "max_bytes": 5678,
         "paused": True,
         "active": active,
+        "active_slots": active_slots,
         "videos": {"11": 100, "22": 200},
         "cache_dir": "/test/cache",
         "max_gb": 12.5,
@@ -65,7 +66,11 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
     monkeypatch.setattr(
         prefetch,
         "status",
-        lambda: {"paused": True, "active": {"msg_id": 42, "tier": "ahead"}},
+        lambda: {
+            "paused": True,
+            "active": {"msg_id": 42, "tier": "ahead"},
+            "active_slots": [{"msg_id": 42, "tier": "ahead"}],
+        },
     )
 
     response = authed_client.get("/api/cache/status")
@@ -76,6 +81,7 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
         "max_bytes": 5678,
         "paused": True,
         "active": {"msg_id": 42, "tier": "ahead"},
+        "active_slots": [{"msg_id": 42, "tier": "ahead"}],
         "videos": {"11": 100},
         "cache_dir": "/fallback/cache",
         "max_gb": 8.0,

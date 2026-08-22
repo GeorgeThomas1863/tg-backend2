@@ -73,6 +73,22 @@ describe("CacheDrawer", () => {
     expect(text).not.toMatch(/·\s*$/);
   });
 
+  test("renders every active slot and marks a second-slot video as downloading", () => {
+    const status = buildStatus({
+      active: { msg_id: 2, tier: "pin" },
+      active_slots: [{ msg_id: 2, tier: "pin" }, { msg_id: 3, tier: "visible" }],
+      videos: { "2": 40, "3": 25 },
+    });
+    const { container } = render(
+      <CacheDrawer videos={videos} status={status} speedBps={null} onClose={vi.fn()} />,
+    );
+
+    expect(container.querySelectorAll(".cache-drawer-active-slot")).toHaveLength(2);
+    expect(container.querySelector(".cache-drawer-active").textContent).toContain("paused.mp4");
+    expect(container.querySelector(".cache-drawer-active").textContent).toContain("downloading.mp4");
+    expect(container.querySelectorAll(".cache-drawer-item-state")[2].textContent).toContain("25%");
+  });
+
   test("renders paused and idle active states", () => {
     const { container, rerender } = render(
       <CacheDrawer videos={videos} status={buildStatus({ paused: true })} speedBps={null} onClose={vi.fn()} />,

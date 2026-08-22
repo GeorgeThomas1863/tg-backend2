@@ -31,6 +31,7 @@ os.environ["PW_HASH"] = bcrypt.hashpw(
 ).decode()
 os.environ["CACHE_DIR"] = tempfile.mkdtemp(prefix="tg-backend-cache-")
 os.environ["TG_CONNECTIONS"] = "2"
+os.environ["PREFETCH_SLOTS"] = "2"
 
 _original_cwd = os.getcwd()
 os.chdir(tempfile.mkdtemp(prefix="tg-backend-tests-"))

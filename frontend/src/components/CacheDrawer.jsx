@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { formatSize } from "../format";
 import { requestPriorityCache } from "../api/client";
+import { getActiveSlots, isVideoDownloading } from "../hooks/useCacheStatus";
 
 const LOCATION_WARNING = "Changing the location wipes the current cache. Continue?";
 const CLEAR_WARNING = "Delete all cached data? Videos will re-download as needed.";
@@ -160,19 +161,29 @@ function buildActiveCard(videos, status, speedBps) {
   if (status.paused) {
     return <div className="cache-drawer-active">Background caching is paused</div>;
   }
-  if (!status.active) {
+  const activeSlots = getActiveSlots(status);
+  if (activeSlots.length === 0) {
     return <div className="cache-drawer-active">Idle</div>;
   }
 
-  const activeVideo = findVideo(videos, status.active.msg_id);
-  const name = activeVideo?.name || `video_${status.active.msg_id}`;
-  const cachedBytes = status.videos[String(status.active.msg_id)] || 0;
+  const cards = [];
+  for (const activeSlot of activeSlots) {
+    cards.push(buildActiveSlot(videos, status, activeSlot, speedBps));
+  }
+
+  return <div className="cache-drawer-active">{cards}</div>;
+}
+
+function buildActiveSlot(videos, status, activeSlot, speedBps) {
+  const activeVideo = findVideo(videos, activeSlot.msg_id);
+  const name = activeVideo?.name || `video_${activeSlot.msg_id}`;
+  const cachedBytes = status.videos[String(activeSlot.msg_id)] || 0;
   const pct = buildPercentage(cachedBytes, activeVideo?.size);
   const speed = speedBps == null ? "" : ` · ≈ ${(speedBps / (1024 * 1024)).toFixed(1)} MB/s`;
-  const tierLabel = buildTierLabel(status.active.tier);
+  const tierLabel = buildTierLabel(activeSlot.tier);
 
   return (
-    <div className="cache-drawer-active">
+    <div className="cache-drawer-active-slot" key={activeSlot.msg_id}>
       <div>Downloading {name}</div>
       <div>{pct}%{speed} · {tierLabel}</div>
     </div>
@@ -197,7 +208,7 @@ function buildItems(videos, status, queuedIds, onCacheNow) {
 function buildItemState(video, status, queuedIds, onCacheNow) {
   const cachedBytes = status.videos[String(video.id)] || 0;
   const pct = buildPercentage(cachedBytes, video.size);
-  const downloading = status.active?.msg_id === video.id;
+  const downloading = isVideoDownloading(status, video.id);
 
   if (pct >= 100) return "cached";
   if (downloading && status.paused) return `${pct}% paused`;

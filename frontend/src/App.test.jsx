@@ -3,13 +3,18 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import App from "./App";
 import { useTelegramAuth } from "./hooks/useTelegramAuth";
 import { useVideos } from "./hooks/useVideos";
+import { useCacheStatus } from "./hooks/useCacheStatus";
 
 vi.mock("./hooks/useTelegramAuth", () => ({ useTelegramAuth: vi.fn() }));
 vi.mock("./hooks/useChannels", () => ({ useChannels: () => ({ channels: [{ id: "1" }], active: { id: "1", title: "Clips" }, loading: false, busy: false, error: null, refresh: vi.fn(), activate: vi.fn() }) }));
 vi.mock("./hooks/useVideos", () => ({ useVideos: vi.fn() }));
 vi.mock("./hooks/useCategories", () => ({ useCategories: () => ({ categories: [], channel: null, loading: false }) }));
-vi.mock("./hooks/useCacheStatus", () => ({ useCacheStatus: () => ({ status: null }) }));
+vi.mock("./hooks/useCacheStatus", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useCacheStatus: vi.fn(),
+}));
 vi.mock("./hooks/useSentinel", () => ({ useSentinel: () => vi.fn() }));
+vi.mock("./hooks/useVisibleVideos", () => ({ useVisibleVideos: () => () => vi.fn() }));
 vi.mock("./components/PasswordGate", () => ({ PasswordGate: () => <div>Site password gate</div> }));
 
 const telegramBase = { loading: false, mutating: false, busy: false, error: null, refresh: vi.fn(), sendCode: vi.fn(), submitCode: vi.fn(), submitPassword: vi.fn(), logout: vi.fn() };
@@ -17,6 +22,8 @@ const telegramBase = { loading: false, mutating: false, busy: false, error: null
 beforeEach(() => {
   useTelegramAuth.mockReset();
   useVideos.mockReset();
+  useCacheStatus.mockReset();
+  useCacheStatus.mockReturnValue({ status: null });
   useVideos.mockReturnValue({ videos: [], total: 0, loading: false, loadingMore: false, error: null, unauthorized: false, refetch: vi.fn(), jumpTo: vi.fn(), loadMore: vi.fn() });
 });
 
@@ -100,5 +107,37 @@ describe("App search input", () => {
 
     expect(search.value).toBe("");
     expect(useVideos).toHaveBeenLastCalledWith(50, null, "");
+  });
+});
+
+describe("App cache status", () => {
+  test("marks a video in the second active slot as downloading", () => {
+    useTelegramAuth.mockReturnValue({
+      ...telegramBase,
+      status: { authorized: true, user: { username: "alice" }, pending_step: null },
+    });
+    useVideos.mockReturnValue({
+      videos: [{ id: 7, name: "clip.mp4", date: "2024-03-15T12:34:56Z", duration: 60, size: 100 }],
+      total: 1,
+      loading: false,
+      loadingMore: false,
+      error: null,
+      unauthorized: false,
+      refetch: vi.fn(),
+      jumpTo: vi.fn(),
+      loadMore: vi.fn(),
+    });
+    useCacheStatus.mockReturnValue({
+      status: {
+        paused: false,
+        active: { msg_id: 3, tier: "pin" },
+        active_slots: [{ msg_id: 3, tier: "pin" }, { msg_id: 7, tier: "visible" }],
+        videos: { "7": 25 },
+      },
+    });
+
+    render(<App />);
+
+    expect(screen.getByText("25% ↓")).toBeInTheDocument();
   });
 });

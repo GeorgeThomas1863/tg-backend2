@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { fetchCacheStatus, postCacheClear, postCachePaused, postCacheSettings } from "../api/client";
-import { useCacheStatus } from "./useCacheStatus";
+import { getActiveSlots, isVideoDownloading, useCacheStatus } from "./useCacheStatus";
 
 vi.mock("../api/client", () => ({ fetchCacheStatus: vi.fn(), postCacheClear: vi.fn(), postCachePaused: vi.fn(), postCacheSettings: vi.fn() }));
 
@@ -32,6 +32,13 @@ beforeEach(() => {
 });
 
 describe("useCacheStatus", () => {
+  test("uses every active slot and falls back to legacy active only when slots are absent", () => {
+    const status = { active: { msg_id: 1 }, active_slots: [{ msg_id: 2 }, { msg_id: 3 }] };
+    expect(getActiveSlots(status)).toEqual(status.active_slots);
+    expect(isVideoDownloading(status, 3)).toBe(true);
+    expect(isVideoDownloading(status, 1)).toBe(false);
+    expect(isVideoDownloading({ active: { msg_id: 1 } }, 1)).toBe(true);
+  });
   test("does not fetch while disabled", () => {
     renderHook(() => useCacheStatus(false));
 

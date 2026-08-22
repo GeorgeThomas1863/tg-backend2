@@ -5,8 +5,7 @@ import { VideoPlayer } from "./VideoPlayer";
 import { useHoverPreview } from "../hooks/useHoverPreview";
 import { formatDate, formatDuration, formatSize } from "../format";
 
-const PREVIEW_POPUP_WIDTH = 360;
-const PREVIEW_POPUP_HEIGHT = (PREVIEW_POPUP_WIDTH * 9) / 16;
+export const PREVIEW_POPUP_WIDTH = 720;
 const PREVIEW_POPUP_GAP = 12;
 const ROW_THUMB_WIDTH = 96;
 
@@ -29,7 +28,8 @@ export function VideoRow({
   const label = buildCacheLabel(pct, isDownloading, paused);
   const rowTitle = video.caption || video.name;
   const metaLine = buildMetaLine(video);
-  const { previewing, onMouseEnter, onMouseLeave } = useHoverPreview(isExpanded);
+  const [previewProgress, setPreviewProgress] = useState(0);
+  const { previewing, onMouseEnter, onMouseLeave, onPopupEnter, onPopupLeave } = useHoverPreview(isExpanded);
   // Never trust the hook's previewing state alone: it only tears down via a
   // deferred effect, so an expand-click could otherwise commit the header
   // preview and the row-panel player in the same paint. Gating on isExpanded
@@ -79,6 +79,9 @@ export function VideoRow({
           <div
             className="preview-popup"
             style={{ top: `${popupPosition.top}px`, left: `${popupPosition.left}px` }}
+            onMouseEnter={onPopupEnter}
+            onMouseLeave={onPopupLeave}
+            onClick={(event) => event.stopPropagation()}
           >
             <video
               className="preview-popup-video"
@@ -88,7 +91,12 @@ export function VideoRow({
               autoPlay
               loop
               playsInline
+              onClick={(event) => seekPreview(event, video.duration)}
+              onTimeUpdate={(event) => setPreviewProgress(buildPreviewProgress(event.currentTarget, video.duration))}
             />
+            <div className="preview-popup-progress" aria-hidden="true">
+              <div className="preview-popup-progress-fill" style={{ width: `${previewProgress}%` }} />
+            </div>
           </div>,
           document.body,
         )}
@@ -109,6 +117,28 @@ function buildCacheLabel(pct, isDownloading, paused) {
 function buildPreviewStart(duration) {
   if (!duration || duration <= 0) return 0;
   return Math.floor(duration * 0.25);
+}
+
+function seekPreview(event, fallbackDuration) {
+  const preview = event.currentTarget;
+  const rect = preview.getBoundingClientRect();
+  if (!(rect.width > 0)) return;
+  const duration = getPreviewDuration(preview, fallbackDuration);
+  if (!(duration > 0)) return;
+  const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+  preview.currentTime = ratio * duration;
+  preview.play()?.catch(() => {});
+}
+
+function buildPreviewProgress(preview, fallbackDuration) {
+  const duration = getPreviewDuration(preview, fallbackDuration);
+  if (!(duration > 0)) return 0;
+  return clamp((preview.currentTime / duration) * 100, 0, 100);
+}
+
+function getPreviewDuration(preview, fallbackDuration) {
+  if (Number.isFinite(preview.duration)) return preview.duration;
+  return Number.isFinite(fallbackDuration) ? fallbackDuration : 0;
 }
 
 // Keeps the popup's position pinned to the row header while it's open.
@@ -160,18 +190,21 @@ function usePopupPosition(showPreview, headerRef) {
 function computePopupPosition(headerEl) {
   if (!headerEl) return null;
   const rect = headerEl.getBoundingClientRect();
-  // Mirrors index.css's mobile clamp (min(360px, calc(100vw - 24px))) so the
-  // position math never assumes more width than the popup actually renders at.
+  // Mirrors index.css (width: min(720px, calc(100vw - 24px)); aspect-ratio:
+  // 16 / 9) so the position math never assumes a larger popup than renders.
   const popupWidth = Math.min(PREVIEW_POPUP_WIDTH, window.innerWidth - PREVIEW_POPUP_GAP * 2);
+  const popupHeight = (popupWidth * 9) / 16;
   const left = clamp(
     rect.left + ROW_THUMB_WIDTH + PREVIEW_POPUP_GAP,
     PREVIEW_POPUP_GAP,
     window.innerWidth - popupWidth - PREVIEW_POPUP_GAP,
   );
+  // A popup taller than the viewport keeps its top edge on-screen rather
+  // than getting a negative top from an inverted clamp.
   const top = clamp(
-    rect.top + rect.height / 2 - PREVIEW_POPUP_HEIGHT / 2,
+    rect.top + rect.height / 2 - popupHeight / 2,
     PREVIEW_POPUP_GAP,
-    window.innerHeight - PREVIEW_POPUP_HEIGHT - PREVIEW_POPUP_GAP,
+    Math.max(PREVIEW_POPUP_GAP, window.innerHeight - popupHeight - PREVIEW_POPUP_GAP),
   );
   return { top, left };
 }

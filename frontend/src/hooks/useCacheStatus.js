@@ -102,3 +102,17 @@ export function useCacheStatus(enabled) {
 
   return { status, speedBps, togglePaused, saveSettings, clearCache };
 }
+
+export function getActiveSlots(status) {
+  if (Array.isArray(status?.active_slots)) return status.active_slots;
+  if (status?.active) return [status.active];
+  return [];
+}
+
+export function isVideoDownloading(status, videoId) {
+  const activeSlots = getActiveSlots(status);
+  for (const slot of activeSlots) {
+    if (slot.msg_id === videoId) return true;
+  }
+  return false;
+}
