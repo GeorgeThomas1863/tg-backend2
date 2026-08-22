@@ -111,6 +111,27 @@ describe("App search input", () => {
 });
 
 describe("App cache status", () => {
+  test("hides the 429 badge when flood status is omitted", () => {
+    useTelegramAuth.mockReturnValue({ ...telegramBase, status: { authorized: true, user: { username: "alice" } } });
+    useCacheStatus.mockReturnValue({ status: { paused: false, total_bytes: 0, max_bytes: 0, videos: {} } });
+
+    render(<App />);
+
+    expect(screen.queryByText(/429 ×/)).not.toBeInTheDocument();
+  });
+
+  test("shows the persistent 429 badge with count and age", () => {
+    useTelegramAuth.mockReturnValue({ ...telegramBase, status: { authorized: true, user: { username: "alice" } } });
+    useCacheStatus.mockReturnValue({
+      status: { paused: false, total_bytes: 0, max_bytes: 0, videos: {}, flood: { count: 2, last_seconds_ago: 65 } },
+      togglePaused: vi.fn(),
+    });
+
+    render(<App />);
+
+    expect(screen.getByText("429 ×2 · 1m ago")).toBeInTheDocument();
+  });
+
   test("marks a video in the second active slot as downloading", () => {
     useTelegramAuth.mockReturnValue({
       ...telegramBase,

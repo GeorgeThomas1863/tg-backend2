@@ -9,6 +9,7 @@ from pathlib import Path
 
 import cache
 import config
+import downloader
 
 logger = logging.getLogger(__name__)
 _GIB = 1024**3
@@ -17,6 +18,7 @@ __all__ = [
     "startup",
     "effective",
     "apply_max_gb",
+    "apply_tg_connections",
     "change_cache_dir",
     "cleanup_old_root",
     "delete_cache_tree",
@@ -37,6 +39,7 @@ async def startup() -> None:
     document = await _load_document()
     root = _document_root(document)
     max_gb = _document_max_gb(document)
+    tg_connections = _document_tg_connections(document)
     usable_root = _prepare_root(root)
     if usable_root is None:
         logger.error(
@@ -49,6 +52,7 @@ async def startup() -> None:
         logger.error("Default cache directory %s is unusable", config.CACHE_DIR)
         usable_root = Path(config.CACHE_DIR).expanduser().resolve()
     cache.configure(usable_root, _gb_to_bytes(max_gb))
+    downloader.configure(tg_connections)
 
 
 def effective() -> dict:
@@ -56,6 +60,7 @@ def effective() -> dict:
     return {
         "cache_dir": str(cache.CACHE_ROOT.resolve()),
         "cache_max_gb": cache.MAX_BYTES / _GIB,
+        "tg_connections": downloader.target_connections(),
     }
 
 
@@ -69,6 +74,17 @@ async def apply_max_gb(value) -> dict:
     cache.configure(cache.CACHE_ROOT, _gb_to_bytes(max_gb))
     await asyncio.to_thread(cache.evict_until_under_cap)
     return {"success": True, "message": "Cache size updated"}
+
+
+async def apply_tg_connections(value) -> dict:
+    """Persist and apply a runtime Telegram download-pool size."""
+    connections = _parse_tg_connections(value)
+    if connections is None:
+        return _failure("Telegram connections must be a whole number from 0 to 16")
+    if not await _persist({"tg_connections": connections}):
+        return _failure("Unable to save Telegram connections")
+    downloader.configure(connections)
+    return {"success": True, "message": "Telegram connections updated"}
 
 
 async def change_cache_dir(raw) -> dict:
@@ -177,6 +193,11 @@ def _document_max_gb(document: dict) -> float:
     return parsed if parsed is not None else float(config.CACHE_MAX_GB)
 
 
+def _document_tg_connections(document: dict) -> int:
+    parsed = _parse_tg_connections(document.get("tg_connections"))
+    return parsed if parsed is not None else config.TG_CONNECTIONS
+
+
 def _parse_max_gb(value) -> float | None:
     if isinstance(value, bool):
         return None
@@ -185,6 +206,17 @@ def _parse_max_gb(value) -> float | None:
     except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(parsed) or parsed <= 0:
+        return None
+    return parsed
+
+
+def _parse_tg_connections(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or not float(value).is_integer():
+        return None
+    parsed = int(value)
+    if parsed < 0 or parsed > 16:
         return None
     return parsed
 

@@ -227,6 +227,11 @@ async def get_block(channel_key: str, msg, idx: int, urgent: bool) -> bytes | No
                 return await download_and_cache_block(channel_key, msg, idx)
             except asyncio.CancelledError:
                 raise
+            except downloader.PoolUnavailable:
+                # Streaming falls back to a direct download; the worker waits.
+                if urgent:
+                    return None
+                raise
             except Exception:
                 report_error(f"downloading block {msg.id}/{idx}")
                 return None
@@ -311,6 +316,7 @@ async def run_worker_download(channel_key: str, msg, idx: int, slot: int = 0) ->
         _worker_download_key = _worker_download_keys[slot]
         _worker_download_task = _worker_download_tasks[slot]
         _active_tier = _active_tiers[slot]
+    hold_seconds = None
     try:
         data = await _worker_download_tasks[slot]
         if data is None:
@@ -320,6 +326,9 @@ async def run_worker_download(channel_key: str, msg, idx: int, slot: int = 0) ->
             raise
         if _active_tiers[slot] == "visible" and visible_pass_still_on(channel_key, msg.id):
             _visible_blocks_by_id.setdefault(msg.id, []).insert(0, idx)
+    except downloader.PoolUnavailable as error:
+        requeue_block(slot, channel_key, msg.id, idx)
+        hold_seconds = error.retry_after
     except Exception:
         _failed_keys.add((msg.id, idx))
         report_error(f"worker block {msg.id}/{idx}")
@@ -330,6 +339,23 @@ async def run_worker_download(channel_key: str, msg, idx: int, slot: int = 0) ->
             _worker_download_task = None
             _worker_download_key = None
             _active_tier = None
+    if hold_seconds is not None:
+        await hold_for_pool(slot, hold_seconds)
+
+
+def requeue_block(slot: int, channel_key: str, msg_id: int, idx: int) -> None:
+    """Put a block back at the front of its tier's queue so it is retried, not skipped."""
+    tier = _active_tiers[slot]
+    if tier == "visible" and visible_pass_still_on(channel_key, msg_id):
+        _visible_blocks_by_id.setdefault(msg_id, []).insert(0, idx)
+    elif tier == "prewarm" and msg_id in _prewarm_messages:
+        _prewarm_blocks_by_id.setdefault(msg_id, []).insert(0, idx)
+
+
+async def hold_for_pool(slot: int, seconds: float) -> None:
+    """Park the slot until the pool may reconnect; pin/priority tiers re-select on their own."""
+    print(f"PREFETCH slot {slot}: no download connections; holding {seconds:.0f}s")
+    await asyncio.sleep(seconds)
 
 
 def ensure_slot(slot: int) -> None:

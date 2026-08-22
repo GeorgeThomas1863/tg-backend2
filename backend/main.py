@@ -12,7 +12,7 @@ import bcrypt
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 from starlette.middleware.sessions import SessionMiddleware
 
 import cache
@@ -109,6 +109,8 @@ class PriorityVideoBody(BaseModel):
 class CacheSettingsBody(BaseModel):
     cache_dir: str | None = None
     cache_max_gb: float | None = None
+    # Strict: Pydantic would otherwise coerce true -> 1 and "4" -> 4 before validation.
+    tg_connections: StrictInt | None = None
 
 
 class ChannelBody(BaseModel):
@@ -227,6 +229,8 @@ async def cache_status():
         "videos": cache.video_totals(),
         "cache_dir": effective_settings["cache_dir"],
         "max_gb": effective_settings["cache_max_gb"],
+        "tg_connections": effective_settings["tg_connections"],
+        "flood": downloader.flood_status(),
     }
 
 
@@ -275,7 +279,11 @@ async def clear_cache():
 
 @app.post("/api/cache/settings", dependencies=[Depends(require_auth)])
 async def set_cache_settings(body: CacheSettingsBody):
-    if body.cache_dir is None and body.cache_max_gb is None:
+    if (
+        body.cache_dir is None
+        and body.cache_max_gb is None
+        and body.tg_connections is None
+    ):
         return {"success": False, "message": "Nothing to change"}
 
     if body.cache_dir is not None:
@@ -285,6 +293,11 @@ async def set_cache_settings(body: CacheSettingsBody):
 
     if body.cache_max_gb is not None:
         result = await settings.apply_max_gb(body.cache_max_gb)
+        if not result["success"]:
+            return format_settings_result(result)
+
+    if body.tg_connections is not None:
+        result = await settings.apply_tg_connections(body.tg_connections)
 
     return format_settings_result(result)
 

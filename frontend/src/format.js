@@ -1,6 +1,15 @@
 // Pure formatters for video metadata display. Builders only — no side effects.
 // Each returns a display string, or "—" when the value is missing.
 
+export function formatAgo(seconds) {
+  if (seconds == null) return "—";
+
+  const wholeSeconds = Math.floor(seconds);
+  if (wholeSeconds < 60) return `${wholeSeconds}s ago`;
+  if (wholeSeconds < 3600) return `${Math.floor(wholeSeconds / 60)}m ago`;
+  return `${Math.floor(wholeSeconds / 3600)}h ago`;
+}
+
 export function formatDate(isoString) {
   if (!isoString) return "—";
   return isoString.slice(0, 10);

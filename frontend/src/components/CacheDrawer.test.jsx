@@ -22,6 +22,7 @@ function buildStatus(overrides = {}) {
     videos: {},
     cache_dir: "C:\\cache",
     max_gb: 20,
+    tg_connections: 8,
     ...overrides,
   };
 }
@@ -201,6 +202,29 @@ describe("CacheDrawer", () => {
 
     expect(screen.getByLabelText("Max size (GB)")).toHaveValue(20);
     expect(screen.getByLabelText("Cache folder")).toHaveValue("C:\\cache");
+    expect(screen.getByLabelText("Telegram connections")).toHaveValue(8);
+    expect(screen.getByText("0 disables the parallel download pool. Values above 8 are unused by the current 8-stripe blocks.")).toBeInTheDocument();
+  });
+
+  test("saves a valid Telegram connections value", async () => {
+    const onSaveSettings = vi.fn().mockResolvedValue({ success: true });
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
+
+    fireEvent.change(screen.getByLabelText("Telegram connections"), { target: { value: "4" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[2]);
+
+    await waitFor(() => expect(onSaveSettings).toHaveBeenCalledWith({ tg_connections: 4 }));
+  });
+
+  test.each(["", "17", "2.5"])("rejects invalid Telegram connections value %s", async (value) => {
+    const onSaveSettings = vi.fn();
+    render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
+
+    fireEvent.change(screen.getByLabelText("Telegram connections"), { target: { value } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[2]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Telegram connections must be a whole number from 0 to 16.");
+    expect(onSaveSettings).not.toHaveBeenCalled();
   });
 
   test("saves a valid max size without confirmation", async () => {
@@ -232,7 +256,7 @@ describe("CacheDrawer", () => {
     }));
     render(<CacheDrawer videos={[]} status={buildStatus()} speedBps={null} onClose={vi.fn()} onSaveSettings={onSaveSettings} />);
 
-    const inputs = [screen.getByLabelText("Max size (GB)"), screen.getByLabelText("Cache folder")];
+    const inputs = [screen.getByLabelText("Max size (GB)"), screen.getByLabelText("Cache folder"), screen.getByLabelText("Telegram connections")];
     const saveButtons = screen.getAllByRole("button", { name: "Save" });
     fireEvent.click(saveButtons[1]);
     const confirmationButtons = [screen.getByRole("button", { name: "Continue" }), screen.getByRole("button", { name: "Cancel" })];
@@ -312,6 +336,7 @@ describe("CacheDrawer", () => {
     const controls = [
       screen.getByLabelText("Max size (GB)"),
       screen.getByLabelText("Cache folder"),
+      screen.getByLabelText("Telegram connections"),
       ...screen.getAllByRole("button", { name: "Save" }),
       screen.getByRole("button", { name: "Clear cache" }),
       ...screen.getAllByRole("button", { name: "Continue" }),

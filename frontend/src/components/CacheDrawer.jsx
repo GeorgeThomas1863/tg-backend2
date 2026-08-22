@@ -61,6 +61,7 @@ export function CacheDrawer({ videos, status, speedBps, onClose, onSaveSettings,
 function CacheSettings({ status, onSaveSettings, onClearCache }) {
   const [sizeInput, setSizeInput] = useState(() => String(status.max_gb));
   const [folderInput, setFolderInput] = useState(() => status.cache_dir);
+  const [connectionsInput, setConnectionsInput] = useState(() => status.tg_connections ?? "");
   const [confirmingFolder, setConfirmingFolder] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [savingRow, setSavingRow] = useState(null);
@@ -77,6 +78,11 @@ function CacheSettings({ status, onSaveSettings, onClearCache }) {
     setError("");
   }
 
+  function editConnections(event) {
+    setConnectionsInput(event.target.value);
+    setError("");
+  }
+
   async function saveSize() {
     const size = Number(sizeInput);
     if (!Number.isFinite(size) || size <= 0) {
@@ -89,6 +95,15 @@ function CacheSettings({ status, onSaveSettings, onClearCache }) {
   async function saveFolder() {
     setConfirmingFolder(false);
     await saveFields("folder", { cache_dir: folderInput.trim() });
+  }
+
+  async function saveConnections() {
+    const connections = Number(connectionsInput);
+    if (connectionsInput === "" || !Number.isInteger(connections) || connections < 0 || connections > 16) {
+      setError("Telegram connections must be a whole number from 0 to 16.");
+      return;
+    }
+    await saveFields("connections", { tg_connections: connections });
   }
 
   async function clearCache() {
@@ -112,6 +127,16 @@ function CacheSettings({ status, onSaveSettings, onClearCache }) {
       <CacheSettingRow label="Max size (GB)" type="number" value={sizeInput} onChange={editSize} onSave={saveSize} busy={savingRow !== null} />
       <CacheSettingRow label="Cache folder" type="text" value={folderInput} onChange={editFolder} onSave={() => setConfirmingFolder(true)} busy={savingRow !== null} />
       {confirmingFolder && buildLocationConfirmation(savingRow !== null, saveFolder, () => setConfirmingFolder(false))}
+      <CacheSettingRow
+        label="Telegram connections"
+        type="number"
+        value={connectionsInput}
+        onChange={editConnections}
+        onSave={saveConnections}
+        busy={savingRow !== null}
+        inputProps={{ min: 0, max: 16, step: 1 }}
+      />
+      <p className="cache-drawer-settings-hint">0 disables the parallel download pool. Values above 8 are unused by the current 8-stripe blocks.</p>
       <button className="cache-drawer-clear" type="button" onClick={() => setConfirmingClear(true)} disabled={savingRow !== null}>Clear cache</button>
       {confirmingClear && buildClearConfirmation(savingRow !== null, clearCache, () => setConfirmingClear(false))}
       {error && <div className="cache-drawer-settings-error" role="alert">{error}</div>}
@@ -131,12 +156,12 @@ function buildClearConfirmation(busy, onContinue, onCancel) {
   );
 }
 
-function CacheSettingRow({ label, type, value, onChange, onSave, busy }) {
+function CacheSettingRow({ label, type, value, onChange, onSave, busy, inputProps }) {
   return (
     <div className="cache-drawer-settings-row">
       <label className="cache-drawer-settings-label">
         {label}
-        <input className="cache-drawer-settings-input" type={type} value={value} onChange={onChange} disabled={busy} />
+        <input className="cache-drawer-settings-input" type={type} value={value} onChange={onChange} disabled={busy} {...inputProps} />
       </label>
       <button className="cache-drawer-settings-save" type="button" onClick={onSave} disabled={busy}>Save</button>
     </div>

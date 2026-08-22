@@ -2,8 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 import cache
 import config
+import downloader
 import settings
 
 
@@ -24,6 +27,11 @@ class FakeCollection:
         self.document.update(update["$set"])
 
 
+class FailingCollection(FakeCollection):
+    async def update_one(self, query, update, upsert=False):
+        raise OSError("database unavailable")
+
+
 def point_cache_at(root, max_bytes=10**9):
     cache.configure(root, max_bytes)
 
@@ -33,12 +41,14 @@ async def test_startup_uses_environment_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "get_collection", lambda: collection)
     monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
     monkeypatch.setattr(config, "CACHE_MAX_GB", 2.5)
+    monkeypatch.setattr(config, "TG_CONNECTIONS", 4)
 
     await settings.startup()
 
     assert settings.effective() == {
         "cache_dir": str(tmp_path.resolve()),
         "cache_max_gb": 2.5,
+        "tg_connections": 4,
     }
     assert cache.CACHE_ROOT == tmp_path.resolve()
     assert cache.MAX_BYTES == int(2.5 * 1024**3)
@@ -55,6 +65,65 @@ async def test_startup_applies_saved_overrides(tmp_path, monkeypatch):
 
     assert cache.CACHE_ROOT == saved.resolve()
     assert cache.MAX_BYTES == int(0.25 * 1024**3)
+
+
+async def test_startup_applies_saved_telegram_connections(tmp_path, monkeypatch):
+    collection = FakeCollection({"_id": "cache", "tg_connections": 8})
+    applied = []
+    monkeypatch.setattr(settings, "get_collection", lambda: collection)
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(downloader, "configure", applied.append)
+
+    await settings.startup()
+
+    assert applied == [8]
+
+
+@pytest.mark.parametrize("value", [True, -1, 17, 2.5, "4"])
+async def test_apply_tg_connections_rejects_invalid_values(value, monkeypatch):
+    collection = FakeCollection()
+    monkeypatch.setattr(settings, "get_collection", lambda: collection)
+
+    result = await settings.apply_tg_connections(value)
+
+    assert result == {
+        "success": False,
+        "message": "Telegram connections must be a whole number from 0 to 16",
+    }
+    assert collection.writes == 0
+
+
+@pytest.mark.parametrize(("value", "expected"), [(0, 0), (8, 8), (4.0, 4)])
+async def test_apply_tg_connections_persists_and_applies(
+    value, expected, monkeypatch
+):
+    collection = FakeCollection()
+    applied = []
+    monkeypatch.setattr(settings, "get_collection", lambda: collection)
+    monkeypatch.setattr(downloader, "configure", applied.append)
+
+    result = await settings.apply_tg_connections(value)
+
+    assert result == {
+        "success": True,
+        "message": "Telegram connections updated",
+    }
+    assert collection.document["tg_connections"] == expected
+    assert applied == [expected]
+
+
+async def test_apply_tg_connections_does_not_apply_after_persist_failure(monkeypatch):
+    applied = []
+    monkeypatch.setattr(settings, "get_collection", FailingCollection)
+    monkeypatch.setattr(downloader, "configure", applied.append)
+
+    result = await settings.apply_tg_connections(8)
+
+    assert result == {
+        "success": False,
+        "message": "Unable to save Telegram connections",
+    }
+    assert applied == []
 
 
 async def test_startup_falls_back_when_saved_directory_is_file(tmp_path, monkeypatch):

@@ -1,6 +1,7 @@
 import pytest
 
 import cache
+import downloader
 import prefetch
 import settings
 
@@ -32,7 +33,14 @@ def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active, ac
     monkeypatch.setattr(
         settings,
         "effective",
-        lambda: {"cache_dir": "/test/cache", "cache_max_gb": 12.5},
+        lambda: {
+            "cache_dir": "/test/cache",
+            "cache_max_gb": 12.5,
+            "tg_connections": 6,
+        },
+    )
+    monkeypatch.setattr(
+        downloader, "flood_status", lambda: {"count": 2, "last_seconds_ago": 4.5}
     )
 
     response = authed_client.get("/api/cache/status")
@@ -47,6 +55,8 @@ def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active, ac
         "videos": {"11": 100, "22": 200},
         "cache_dir": "/test/cache",
         "max_gb": 12.5,
+        "tg_connections": 6,
+        "flood": {"count": 2, "last_seconds_ago": 4.5},
     }
     assert status_calls == 1
 
@@ -61,7 +71,14 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
     monkeypatch.setattr(
         settings,
         "effective",
-        lambda: {"cache_dir": "/fallback/cache", "cache_max_gb": 8.0},
+        lambda: {
+            "cache_dir": "/fallback/cache",
+            "cache_max_gb": 8.0,
+            "tg_connections": 4,
+        },
+    )
+    monkeypatch.setattr(
+        downloader, "flood_status", lambda: {"count": 0, "last_seconds_ago": None}
     )
     monkeypatch.setattr(
         prefetch,
@@ -85,6 +102,8 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
         "videos": {"11": 100},
         "cache_dir": "/fallback/cache",
         "max_gb": 8.0,
+        "tg_connections": 4,
+        "flood": {"count": 0, "last_seconds_ago": None},
     }
 
 

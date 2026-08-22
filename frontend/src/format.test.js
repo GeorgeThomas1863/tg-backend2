@@ -1,5 +1,16 @@
 import { describe, test, expect } from "vitest";
-import { formatDate, formatDuration, formatSize } from "./format";
+import { formatAgo, formatDate, formatDuration, formatSize } from "./format";
+
+describe("formatAgo", () => {
+  test.each([
+    [42.1, "42s ago"],
+    [60, "1m ago"],
+    [3599, "59m ago"],
+    [3600, "1h ago"],
+  ])("formats %s seconds as %s", (seconds, expected) => {
+    expect(formatAgo(seconds)).toBe(expected);
+  });
+});
 
 describe("formatDate", () => {
   test("returns em dash for null, undefined, and empty string", () => {

@@ -2,6 +2,9 @@
 
 import threading
 
+import pytest
+
+import downloader
 import prefetch
 import settings
 
@@ -16,6 +19,7 @@ def test_empty_cache_settings_change_does_nothing(authed_client, monkeypatch):
     calls = []
     monkeypatch.setattr(settings, "change_cache_dir", lambda value: calls.append(value))
     monkeypatch.setattr(settings, "apply_max_gb", lambda value: calls.append(value))
+    monkeypatch.setattr(settings, "apply_tg_connections", lambda value: calls.append(value))
 
     response = authed_client.post("/api/cache/settings", json={})
 
@@ -43,6 +47,59 @@ def test_size_only_change_does_not_restart_prefetch(authed_client, monkeypatch):
 
     assert response.json() == {"success": True, "message": "Cache size updated"}
     assert calls == [("size", 12.5)]
+
+
+def test_telegram_connections_only_change(authed_client, monkeypatch):
+    async def fake_apply(value):
+        assert value == 8
+        return {"success": True, "message": "Telegram connections updated"}
+
+    monkeypatch.setattr(settings, "apply_tg_connections", fake_apply)
+
+    response = authed_client.post(
+        "/api/cache/settings", json={"tg_connections": 8}
+    )
+
+    assert response.json() == {
+        "success": True,
+        "message": "Telegram connections updated",
+    }
+
+
+def test_combined_size_and_telegram_connections_change(authed_client, monkeypatch):
+    calls = []
+
+    async def fake_size(value):
+        calls.append(("size", value))
+        return {"success": True, "message": "Cache size updated"}
+
+    async def fake_connections(value):
+        calls.append(("connections", value))
+        return {"success": True, "message": "Telegram connections updated"}
+
+    monkeypatch.setattr(settings, "apply_max_gb", fake_size)
+    monkeypatch.setattr(settings, "apply_tg_connections", fake_connections)
+
+    response = authed_client.post(
+        "/api/cache/settings",
+        json={"cache_max_gb": 12.5, "tg_connections": 6},
+    )
+
+    assert response.json() == {
+        "success": True,
+        "message": "Telegram connections updated",
+    }
+    assert calls == [("size", 12.5), ("connections", 6)]
+
+
+@pytest.mark.parametrize("value", [2.5, True, "4"])
+def test_invalid_telegram_connections_body_is_rejected(authed_client, value):
+    """Strict int: Pydantic must not coerce true -> 1 or "4" -> 4 past validation."""
+    response = authed_client.post(
+        "/api/cache/settings", json={"tg_connections": value}
+    )
+
+    assert response.status_code == 422
 
 
 def test_dir_change_restarts_prefetch_and_deletes_old_cache(authed_client, monkeypatch):
@@ -147,7 +204,14 @@ def test_cache_status_includes_effective_settings(authed_client, monkeypatch):
     monkeypatch.setattr(
         settings,
         "effective",
-        lambda: {"cache_dir": "/effective/cache", "cache_max_gb": 24.0},
+        lambda: {
+            "cache_dir": "/effective/cache",
+            "cache_max_gb": 24.0,
+            "tg_connections": 4,
+        },
+    )
+    monkeypatch.setattr(
+        downloader, "flood_status", lambda: {"count": 0, "last_seconds_ago": None}
     )
 
     response = authed_client.get("/api/cache/status")

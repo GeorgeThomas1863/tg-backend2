@@ -67,6 +67,7 @@ CACHE_DIR = Path(os.environ.get("CACHE_DIR", str(Path(__file__).resolve().parent
 CACHE_MAX_GB = float(os.environ.get("CACHE_MAX_GB", "100"))
 PREWARM_ENABLED = os.environ.get("PREWARM_ENABLED", "1") != "0"
 PREWARM_RESCAN_SECONDS = int(os.environ.get("PREWARM_RESCAN_SECONDS", "600"))
+POOL_RETRY_SECONDS = int(os.environ.get("POOL_RETRY_SECONDS", "30"))
 
 if TG_CONNECTIONS < 0:
     raise ValueError("TG_CONNECTIONS must be >= 0 (0 disables the parallel pool)")
@@ -76,6 +77,8 @@ if CACHE_MAX_GB <= 0:
     raise ValueError("CACHE_MAX_GB must be greater than zero")
 if PREWARM_RESCAN_SECONDS <= 0:
     raise ValueError("PREWARM_RESCAN_SECONDS must be greater than zero")
+if POOL_RETRY_SECONDS <= 0:
+    raise ValueError("POOL_RETRY_SECONDS must be greater than zero")
 
 BLOCK_SIZE = 4 * 1024 * 1024   # cache unit; multiple of ALIGN and REQUEST_SIZE
 MSG_CACHE_TTL = 300            # seconds a resolved message stays fresh

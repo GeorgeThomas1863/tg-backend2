@@ -13,7 +13,8 @@ import { ChannelDrawer } from "./components/ChannelDrawer";
 import { JumpControls } from "./components/JumpControls";
 import { TelegramAuthDrawer } from "./components/TelegramAuthDrawer";
 import { CategoryBar } from "./components/CategoryBar";
-import { formatSize } from "./format";
+import { FloodAlert } from "./components/FloodAlert";
+import { formatAgo, formatSize } from "./format";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -117,6 +118,7 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
 
   return (
     <div className="page">
+      <FloodAlert flood={status?.flood} paused={status?.paused} onPause={togglePaused} />
       <header className="ledger-header">
         <div className="ledger-heading">
           <h1>Videos</h1>
@@ -141,6 +143,11 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
               <button className={status.paused ? "cache-pause-btn paused" : "cache-pause-btn"} onClick={togglePaused}>
                 {status.paused ? "▶ Resume caching" : "⏸ Pause caching"}
               </button>
+              {status.flood?.count > 0 && (
+                <span className="flood-badge" title="Telegram transport-level 429 incidents since backend start">
+                  429 ×{status.flood.count} · {formatAgo(status.flood.last_seconds_ago)}
+                </span>
+              )}
             </>
           )}
           <TelegramTrigger label={telegramLabel} onClick={onOpenTelegram} />

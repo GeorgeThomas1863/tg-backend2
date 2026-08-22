@@ -33,6 +33,9 @@ dist-ssr/
 *.local
 npm-debug.log*
 
+# Vitest coverage output
+coverage/
+
 # Editor
 .vscode/*
 !.vscode/extensions.json

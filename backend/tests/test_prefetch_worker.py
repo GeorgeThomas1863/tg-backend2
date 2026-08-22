@@ -69,6 +69,82 @@ async def test_urgent_get_block_returns_none_on_downloader_exception(
     assert await prefetch.get_block("test", world["messages"][1], 0, True) is None
 
 
+async def test_urgent_get_block_stays_quiet_when_pool_unavailable(
+    tmp_path, monkeypatch, capsys
+):
+    world = install_world(
+        tmp_path,
+        monkeypatch,
+        [make_msg(1)],
+        outcomes={(1, 0, 1): downloader.PoolUnavailable(2, 30)},
+    )
+
+    assert await prefetch.get_block("test", world["messages"][1], 0, True) is None
+    assert "PREFETCH ERROR" not in capsys.readouterr().out
+
+
+async def test_worker_holds_then_retries_block_when_pool_unavailable(
+    tmp_path, monkeypatch, capsys
+):
+    world = install_world(
+        tmp_path,
+        monkeypatch,
+        [make_msg(1)],
+        outcomes={(1, 0, 1): downloader.PoolUnavailable(2, 0.01)},
+    )
+    prefetch.note_playhead("test", 1, 0)
+    await prefetch.start()
+
+    await wait_until_real(lambda: world["calls"].count((1, 0)) == 2)
+    world["gates"][(1, 0, 2)].set()
+    await wait_until(lambda: cache.has_block("test", 1, 0))
+    await prefetch.stop()
+
+    output = capsys.readouterr().out
+    assert (1, 0) not in prefetch._failed_keys
+    assert "PREFETCH ERROR" not in output
+    assert "holding" in output
+
+
+async def test_prewarm_block_is_requeued_when_pool_unavailable(tmp_path, monkeypatch):
+    world = install_world(
+        tmp_path,
+        monkeypatch,
+        [make_msg(1, 3 * BLOCK_SIZE)],
+        outcomes={(1, 1, 1): downloader.PoolUnavailable(2, 0)},
+    )
+    prefetch.initialize_slots()
+    prefetch._prewarm_messages = {1: world["messages"][1]}
+    prefetch._prewarm_blocks_by_id = {1: [2]}
+    prefetch._active_tiers[0] = "prewarm"
+
+    await prefetch.run_worker_download("test", world["messages"][1], 1)
+
+    assert prefetch._prewarm_blocks_by_id[1] == [1, 2]
+    assert (1, 1) not in prefetch._failed_keys
+
+
+async def test_visible_block_is_requeued_when_pool_unavailable(tmp_path, monkeypatch):
+    world = install_world(
+        tmp_path,
+        monkeypatch,
+        [make_msg(1, 3 * BLOCK_SIZE)],
+        outcomes={(1, 1, 1): downloader.PoolUnavailable(2, 0)},
+    )
+    prefetch.initialize_slots()
+    prefetch._visible_channel = "test"
+    prefetch._visible_message = world["messages"][1]
+    prefetch._visible_blocks = [2]
+    prefetch._visible_messages = {1: world["messages"][1]}
+    prefetch._visible_blocks_by_id = {1: [2]}
+    prefetch._active_tiers[0] = "visible"
+
+    await prefetch.run_worker_download("test", world["messages"][1], 1)
+
+    assert prefetch._visible_blocks_by_id[1] == [1, 2]
+    assert (1, 1) not in prefetch._failed_keys
+
+
 async def test_cancelled_urgent_get_block_propagates(tmp_path, monkeypatch):
     world = install_world(tmp_path, monkeypatch, [make_msg(1)])
     task = asyncio.create_task(prefetch.get_block("test", world["messages"][1], 0, True))
@@ -567,3 +643,14 @@ async def wait_until(predicate, iterations=100):
 async def yield_many(iterations=20):
     for _ in range(iterations):
         await asyncio.sleep(0)
+
+
+async def wait_until_real(predicate, timeout=2.0):
+    """Like wait_until, but lets real time pass for code that sleeps."""
+    waited = 0.0
+    while waited < timeout:
+        if predicate():
+            return
+        await asyncio.sleep(0.005)
+        waited += 0.005
+    raise AssertionError("condition was not reached")
