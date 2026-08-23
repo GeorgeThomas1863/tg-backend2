@@ -113,18 +113,16 @@ async def _fetch_videos(
     if channel is None:
         return [], None
     try:
-        if cat_start is None or cat_end is None:
+        if cat_start is None:
             msgs = await with_entity_warm(lambda: client.get_messages(
                 channel, limit=limit, offset_id=before_id or 0,
                 add_offset=offset,
                 filter=InputMessagesFilterVideo,
             ))
         else:
-            offset_id = (
-                before_id
-                if before_id and before_id <= cat_end
-                else cat_end
-            )
+            offset_id = before_id or 0
+            if cat_end is not None and (not before_id or before_id > cat_end):
+                offset_id = cat_end
             msgs = await with_entity_warm(lambda: client.get_messages(
                 channel, limit=limit, offset_id=offset_id,
                 add_offset=offset,

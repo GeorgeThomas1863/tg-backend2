@@ -86,6 +86,24 @@ describe("CategoryBar", () => {
     expect(spanClasses).toEqual(["category-row-name", "category-row-count", "category-row-range"]);
   });
 
+  test("renders a question mark for an open-ended category range", () => {
+    const categoriesWithOpenEndedSub = [
+      {
+        ...categories[0],
+        subs: [
+          ...categories[0].subs,
+          { key: "rk2-crazyasiangf", name: "CrazyAsianGF", start: 38656, end: "?", count: 49, parent: null },
+        ],
+      },
+      categories[1],
+    ];
+    renderBar({ categories: categoriesWithOpenEndedSub });
+    openDropdown();
+
+    const row = screen.getByRole("option", { name: /CrazyAsianGF/ });
+    expect(row.querySelector(".category-row-range")).toHaveTextContent("38656–?");
+  });
+
   test("search keeps a matching sub and its major while hiding unrelated rows", () => {
     renderBar();
     openDropdown();

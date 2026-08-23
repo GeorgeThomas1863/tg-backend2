@@ -1,3 +1,5 @@
+import asyncio
+
 import categories
 import channels
 import main
@@ -11,15 +13,30 @@ class FakeCursor:
     async def to_list(self, length):
         return self.documents
 
+    def sort(self, field, direction):
+        assert field == "forwardFromMessageId"
+        assert direction == 1
+        self.documents.sort(key=lambda item: item["forwardFromMessageId"])
+        return self
+
 
 class FakeCollection:
-    def __init__(self, ids=None, error=None):
+    def __init__(self, ids=None, markers=None, error=None):
         self.ids = ids or []
+        self.markers = markers or []
         self.error = error
 
     def find(self, query, projection):
         if self.error:
             raise self.error
+        if query["paramType"] == "textParams":
+            assert query["forwardFromMessageId"] == {
+                "$gt": categories.HIGHEST_HARDCODED_ID
+            }
+            assert projection == {
+                "_id": 0, "forwardFromMessageId": 1, "text": 1
+            }
+            return FakeCursor(self.markers.copy())
         assert query == {"paramType": "vidParams"}
         assert projection == {"_id": 0, "forwardFromMessageId": 1}
         documents = [{"forwardFromMessageId": value} for value in self.ids]
@@ -30,6 +47,9 @@ def reset_counts(monkeypatch, collection):
     monkeypatch.setattr(categories, "_count_cache", None)
     monkeypatch.setattr(categories, "_count_cache_expires", 0.0)
     monkeypatch.setattr(categories, "get_collection", lambda: collection)
+    monkeypatch.setattr(
+        categories, "_table_state", (categories.CATEGORY_TABLE, categories._base_ranges)
+    )
 
 
 def test_keys_slug_tags_and_sub_names():
@@ -129,6 +149,36 @@ async def test_refresh_failure_keeps_last_exact_counts(monkeypatch):
     assert result["categories"][0]["count"] == 2
 
 
+class SlowCursor(FakeCursor):
+    async def to_list(self, length):
+        await asyncio.sleep(0)
+        return self.documents
+
+
+class CountingCollection(FakeCollection):
+    def __init__(self, ids):
+        super().__init__(ids)
+        self.loads = 0
+
+    def find(self, query, projection):
+        cursor = super().find(query, projection)
+        if query["paramType"] == "vidParams":
+            self.loads += 1
+        return SlowCursor(cursor.documents)
+
+
+async def test_concurrent_expired_refreshes_share_one_load(monkeypatch):
+    collection = CountingCollection([4, 34])
+    reset_counts(monkeypatch, collection)
+    monkeypatch.setattr(categories, "_refresh_lock", asyncio.Lock())
+    first, second = await asyncio.gather(
+        categories.get_categories(), categories.get_categories()
+    )
+    assert collection.loads == 1
+    assert first == second
+    assert first["categories"][0]["count"] == 2
+
+
 def test_categories_requires_auth(client):
     assert client.get("/api/categories").status_code == 401
 
@@ -173,6 +223,7 @@ def test_videos_filters_category_and_uses_category_count(
             "categories": [{"key": "old", "count": 7, "subs": []}],
         }
 
+    reset_counts(monkeypatch, FakeCollection([34]))
     monkeypatch.setattr(channels, "active_key", lambda: categories.STUFF_CHANNEL)
     monkeypatch.setattr(categories, "get_categories", fake_categories)
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list)
@@ -185,7 +236,36 @@ def test_videos_filters_category_and_uses_category_count(
     assert seen["cat_end"] == 90
 
 
+def test_videos_resolves_open_marker_category_on_cold_start(
+    authed_client, monkeypatch
+):
+    seen = {}
+
+    async def fake_list(**kwargs):
+        seen.update(kwargs)
+        return [], 0
+
+    reset_counts(monkeypatch, FakeCollection(
+        ids=[38657, 38658],
+        markers=[{
+            "forwardFromMessageId": 38656,
+            "text": "+++ #CrazyAsianGF #CAG #begin",
+        }],
+    ))
+    monkeypatch.setattr(channels, "active_key", lambda: categories.STUFF_CHANNEL)
+    monkeypatch.setattr(telegram, "list_videos_with_total", fake_list)
+    response = authed_client.get(
+        "/api/videos?category=rk2-crazyasiangf&before_id=40000"
+    )
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
+    assert seen["before_id"] == 40000
+    assert seen["cat_start"] == 38656
+    assert seen["cat_end"] is None
+
+
 def test_videos_rejects_unknown_category(authed_client, monkeypatch):
+    reset_counts(monkeypatch, FakeCollection())
     monkeypatch.setattr(channels, "active_key", lambda: categories.STUFF_CHANNEL)
     response = authed_client.get("/api/videos?category=missing")
     assert response.status_code == 404
@@ -229,3 +309,18 @@ async def test_telegram_caps_cursor_at_category_end(monkeypatch):
         before_id=100, cat_start=3, cat_end=90
     )
     assert seen["offset_id"] == 90
+
+
+async def test_telegram_open_category_has_no_cursor_cap(monkeypatch):
+    seen = {}
+
+    async def fake_get_messages(channel, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(telegram.client, "get_messages", fake_get_messages)
+    await telegram.list_videos_with_total(
+        before_id=40000, cat_start=38656, cat_end=None
+    )
+    assert seen["offset_id"] == 40000
+    assert seen["min_id"] == 38656

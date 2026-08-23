@@ -1,6 +1,15 @@
-"""Category metadata and cached Mongo-backed video counts."""
+"""Category metadata and cached Mongo-backed video counts.
 
+The hand-curated table is extended from newer ``textParams`` markers: ``!!!``
+opens a major, ``+++`` opens a sub, and an unprefixed hashtag marker closes
+the matching sub or the major. Hashtag overlap, not begin/end words, decides.
+Base-table subs must be closed; only the last major may be open — open subs are
+always auto-discovered from markers, which is what gives them their hashtags.
+"""
+
+import asyncio
 from bisect import bisect_left, bisect_right
+import copy
 import logging
 import re
 import time
@@ -47,12 +56,13 @@ CATEGORY_TABLE = [
 {"name":"XFights","tag":"XFIGHTS","start":27098,"end":31295,"subs":[{"name":"Academy Wrestling","start":27099,"end":27143},{"name":"Antscha","start":27144,"end":27173},{"name":"APL","start":27174,"end":27200},{"name":"Brazil","start":27201,"end":27281},{"name":"CatzReview","start":27282,"end":27306},{"name":"CJ Films","start":27307,"end":27326},{"name":"CPL","start":27327,"end":27601},{"name":"Defeated","start":27602,"end":27697},{"name":"DT Sexfight","start":27698,"end":27733},{"name":"Eros","start":27734,"end":27763},{"name":"Evolved Fights","start":27764,"end":27910},{"name":"Foxy Combat","start":27911,"end":27994},{"name":"Fighting Dolls","start":27995,"end":28775},{"name":"Female Combat Stars","start":28776,"end":28823},{"name":"Femwin","start":28824,"end":28844},{"name":"Festelle","start":28845,"end":28903},{"name":"GirlsFightClub","start":28904,"end":28953},{"name":"Japanese","start":28954,"end":28967},{"name":"Kontex","start":28968,"end":29049},{"name":"Korean","start":29050,"end":29136},{"name":"Mexican","start":29137,"end":29159},{"name":"Mr Rain","start":29160,"end":29254},{"name":"NudeFightClub","start":29255,"end":29272},{"name":"Pompeii","start":29273,"end":29286},{"name":"Real Catfights","start":29287,"end":29392},{"name":"RVQ Brazil","start":29393,"end":29530},{"name":"SFZ","start":29531,"end":30135},{"name":"Sisterhood of Sin","start":30136,"end":30204},{"name":"SuiteFights","start":30205,"end":30278},{"name":"TribDolls","start":30279,"end":30669},{"name":"TillyTown","start":30670,"end":30698},{"name":"WeBringIt","start":30699,"end":30744},{"name":"Other","start":30745,"end":31294}]},
 {"name":"AdultTime","tag":"ADULTTIME","start":31302,"end":35335,"subs":[{"name":"21Sextury","start":31303,"end":31758},{"name":"21Sextury / NudeFightClub","start":31304,"end":31413},{"name":"21Sextury / TeenBitchClub","start":31414,"end":31717},{"name":"21Sextury / Other","start":31718,"end":31757},{"name":"Burning Angel","start":31759,"end":31976},{"name":"Devils Film","start":31977,"end":32239},{"name":"Fame","start":32240,"end":32405},{"name":"GirlsWay","start":32406,"end":34368},{"name":"GirlsWay / MommysGirl","start":32407,"end":33014},{"name":"GirlsWay / SexTapeLesbians","start":33015,"end":33057},{"name":"GirlsWay / WebYoung","start":33058,"end":33421},{"name":"GirlsWay / WeLikeGirls","start":33422,"end":33446},{"name":"GirlsWay / Other","start":33447,"end":34367},{"name":"LesbianX","start":34369,"end":34448},{"name":"LezBeBad","start":34449,"end":34604},{"name":"AdultTime Other","start":34605,"end":34647},{"name":"PureTaboo","start":34648,"end":34657},{"name":"Slayed","start":34658,"end":34704},{"name":"Vivid 19","start":34705,"end":35321},{"name":"Vivid Other","start":35322,"end":35334}]},
 {"name":"DirtyWrestlingPit","tag":"DWP","start":35336,"end":35913,"subs":[]},
-{"name":"Reality Kings 2","tag":"RK2","start":35916,"end":36815,"subs":[{"name":"WeLiveTogether 2","start":35917,"end":36596},{"name":"MomsBangTeens","start":36597,"end":36815}]}
+{"name":"Reality Kings 2","tag":"RK2","start":35916,"end":None,"subs":[{"name":"WeLiveTogether 2","start":35917,"end":36596},{"name":"MomsBangTeens","start":36597,"end":36849},{"name":"MomsLickTeens","start":36850,"end":37051},{"name":"CumFiesta","start":37052,"end":37523},{"name":"HDLove","start":37524,"end":37574},{"name":"Pure18","start":37575,"end":37847},{"name":"FirstTimeAuditions","start":37848,"end":38134},{"name":"InTheVIP","start":38135,"end":38236},{"name":"BigTitBoss","start":38237,"end":38346},{"name":"CFNM","start":38347,"end":38388},{"name":"HotGirlsGame","start":38389,"end":38468},{"name":"MikeInBrazil","start":38469,"end":38655}]}
 ]
 
 _count_cache: tuple[bool, dict[str, int]] | None = None
 _count_cache_expires: float = 0.0
-_ranges: dict[str, tuple[int, int]] = {}
+_refresh_lock = asyncio.Lock()
+_table_state: tuple[list[dict], dict[str, tuple[int, int | None]]]
 
 
 def get_collection():
@@ -73,17 +83,37 @@ async def get_categories() -> dict:
     }
 
 
-def resolve(key: str) -> tuple[int, int] | None:
+async def ensure_fresh() -> None:
+    """Refresh the marker-extended table when the cache is missing or expired."""
+    await _load_counts()
+
+
+def resolve(key: str) -> tuple[int, int | None] | None:
     """Resolve a category key to its exclusive marker bounds."""
-    return _ranges.get(key)
+    return _table_state[1].get(key)
 
 
 async def _load_counts() -> tuple[bool, dict[str, int]]:
-    global _count_cache, _count_cache_expires
-    if _count_cache is not None and time.monotonic() < _count_cache_expires:
+    if _is_cache_fresh():
         return _count_cache
+    async with _refresh_lock:
+        # Callers that queued behind an in-flight refresh reuse its result.
+        if _is_cache_fresh():
+            return _count_cache
+        await _refresh_counts()
+    return _count_cache
+
+
+def _is_cache_fresh() -> bool:
+    return _count_cache is not None and time.monotonic() < _count_cache_expires
+
+
+async def _refresh_counts() -> None:
+    global _count_cache, _count_cache_expires, _table_state
     try:
-        message_ids = await _fetch_message_ids()
+        message_ids, marker_documents = await _fetch_refresh_data()
+        table, ranges = _extend_table(marker_documents)
+        _table_state = table, ranges
         _count_cache = True, _count_ranges(message_ids)
         _count_cache_expires = time.monotonic() + CATEGORY_COUNT_TTL
     except Exception:
@@ -92,11 +122,19 @@ async def _load_counts() -> tuple[bool, dict[str, int]]:
         if _count_cache is None:
             _count_cache = False, _estimate_counts()
         _count_cache_expires = time.monotonic() + CATEGORY_COUNT_RETRY_TTL
-    return _count_cache
 
 
-async def _fetch_message_ids() -> list[int]:
-    cursor = get_collection().find(
+async def _fetch_refresh_data() -> tuple[list[int], list[dict]]:
+    collection = get_collection()
+    marker_cursor = collection.find(
+        {
+            "paramType": "textParams",
+            "forwardFromMessageId": {"$gt": HIGHEST_HARDCODED_ID},
+        },
+        {"_id": 0, "forwardFromMessageId": 1, "text": 1},
+    ).sort("forwardFromMessageId", 1)
+    marker_documents = await marker_cursor.to_list(None)
+    cursor = collection.find(
         {"paramType": "vidParams"},
         {"_id": 0, "forwardFromMessageId": 1},
     )
@@ -107,33 +145,38 @@ async def _fetch_message_ids() -> list[int]:
         if isinstance(message_id, int):
             message_ids.append(message_id)
     message_ids.sort()
-    return message_ids
+    return message_ids, marker_documents
 
 
 def _count_ranges(message_ids: list[int]) -> dict[str, int]:
     counts = {}
-    for key, bounds in _ranges.items():
+    for key, bounds in _table_state[1].items():
         start, end = bounds
+        if end is None:
+            counts[key] = len(message_ids) - bisect_right(message_ids, start)
+            continue
         counts[key] = bisect_left(message_ids, end) - bisect_right(message_ids, start)
     return counts
 
 
 def _estimate_counts() -> dict[str, int]:
     counts = {}
-    for key, bounds in _ranges.items():
+    for key, bounds in _table_state[1].items():
         start, end = bounds
-        counts[key] = end - start - 1
+        counts[key] = 0 if end is None else end - start - 1
     return counts
 
 
 def _build_categories(counts: dict[str, int]) -> list[dict]:
     result = []
-    for category in CATEGORY_TABLE:
+    for category in _table_state[0]:
         item = {key: value for key, value in category.items() if key != "subs"}
+        item["end"] = _serialize_end(item["end"])
         item["count"] = counts[category["key"]]
         item["subs"] = []
         for sub in category["subs"]:
             sub_item = sub.copy()
+            sub_item["end"] = _serialize_end(sub_item["end"])
             sub_item["count"] = counts[sub["key"]]
             item["subs"].append(sub_item)
         result.append(item)
@@ -144,17 +187,27 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
-def _prepare_table() -> None:
-    for category in CATEGORY_TABLE:
+def _serialize_end(end: int | None) -> int | str:
+    return "?" if end is None else end
+
+
+def _prepare_table(table: list[dict]) -> dict[str, tuple[int, int | None]]:
+    ranges = {}
+    for category in table:
         major_key = _slug(category["tag"])
         category["key"] = major_key
-        _ranges[major_key] = category["start"], category["end"]
-        _prepare_subs(category, major_key)
+        ranges[major_key] = category["start"], category["end"]
+        _prepare_subs(category, major_key, ranges)
+    return ranges
 
 
-def _prepare_subs(category: dict, major_key: str) -> None:
+def _prepare_subs(category: dict, major_key: str, ranges: dict) -> None:
     sub_keys = {}
     for sub in category["subs"]:
+        if not isinstance(sub["end"], int):
+            raise ValueError(
+                f"Base-table subs must have an integer end: {sub['name']}"
+            )
         sub_keys[sub["name"]] = f"{major_key}-{_slug(sub['name'])}"
     for sub in category["subs"]:
         original_name = sub["name"]
@@ -164,7 +217,128 @@ def _prepare_subs(category: dict, major_key: str) -> None:
             parent_name, display_name = original_name.split(" / ", 1)
             sub["parent"] = sub_keys.get(parent_name)
             sub["name"] = display_name
-        _ranges[sub["key"]] = sub["start"], sub["end"]
+        ranges[sub["key"]] = sub["start"], sub["end"]
 
 
-_prepare_table()
+def _find_highest_hardcoded_id() -> int:
+    highest = 0
+    for category in CATEGORY_TABLE:
+        for value in (category["start"], category["end"]):
+            if isinstance(value, int):
+                highest = max(highest, value)
+        for sub in category["subs"]:
+            for value in (sub["start"], sub["end"]):
+                if isinstance(value, int):
+                    highest = max(highest, value)
+    return highest
+
+
+def _extend_table(marker_documents: list[dict]) -> tuple[list[dict], dict]:
+    table = copy.deepcopy(CATEGORY_TABLE)
+    state = _seed_marker_state(table)
+    for document in marker_documents:
+        marker_id = document.get("forwardFromMessageId")
+        text = document.get("text")
+        if not isinstance(marker_id, int) or marker_id <= HIGHEST_HARDCODED_ID:
+            continue
+        if not isinstance(text, str):
+            continue
+        hashtags = _extract_hashtags(text)
+        _apply_marker(table, state, marker_id, text, hashtags)
+    return table, _build_ranges(table)
+
+
+def _seed_marker_state(table: list[dict]) -> dict:
+    open_major = table[-1] if table and table[-1]["end"] is None else None
+    return {
+        "major": open_major,
+        "sub": None,
+        "tags": set(),
+        "keys": _collect_keys(table),
+    }
+
+
+def _apply_marker(
+    table: list[dict], state: dict, marker_id: int, text: str, hashtags: list[str]
+) -> None:
+    if text.startswith("!!!") and hashtags:
+        _close_section(state["sub"], marker_id)
+        _close_section(state["major"], marker_id)
+        state["major"] = _append_major(table, hashtags[0], marker_id, state["keys"])
+        state["sub"], state["tags"] = None, set()
+        return
+    if text.startswith("+++") and hashtags and state["major"] is not None:
+        _close_section(state["sub"], marker_id)
+        state["sub"] = _append_sub(
+            state["major"], hashtags[0], marker_id, state["keys"]
+        )
+        state["tags"] = {tag.lower() for tag in hashtags}
+        return
+    if not hashtags:
+        return
+    marker_tags = {tag.lower() for tag in hashtags}
+    if state["sub"] is not None and marker_tags.intersection(state["tags"]):
+        _close_section(state["sub"], marker_id)
+        state["sub"], state["tags"] = None, set()
+        return
+    _close_section(state["sub"], marker_id)
+    _close_section(state["major"], marker_id)
+    state["major"], state["sub"], state["tags"] = None, None, set()
+
+
+def _collect_keys(table: list[dict]) -> set[str]:
+    keys = set()
+    for category in table:
+        keys.add(category["key"])
+        for sub in category["subs"]:
+            keys.add(sub["key"])
+    return keys
+
+
+def _extract_hashtags(text: str) -> list[str]:
+    return re.findall(r"#([A-Za-z0-9_]+)", text)
+
+
+def _append_major(table: list[dict], name: str, start: int, used: set[str]) -> dict:
+    key = _make_unique_key(_slug(name), used)
+    category = {"name": name, "tag": name, "start": start, "end": None,
+                "subs": [], "key": key}
+    table.append(category)
+    return category
+
+
+def _append_sub(category: dict, name: str, start: int, used: set[str]) -> dict:
+    key = _make_unique_key(f"{category['key']}-{_slug(name)}", used)
+    sub = {"name": name, "start": start, "end": None,
+           "key": key, "parent": None}
+    category["subs"].append(sub)
+    return sub
+
+
+def _make_unique_key(candidate: str, used: set[str]) -> str:
+    key = candidate
+    suffix = 2
+    while key in used:
+        key = f"{candidate}-{suffix}"
+        suffix += 1
+    used.add(key)
+    return key
+
+
+def _close_section(section: dict | None, marker_id: int) -> None:
+    if section is not None and section["end"] is None:
+        section["end"] = marker_id
+
+
+def _build_ranges(table: list[dict]) -> dict[str, tuple[int, int | None]]:
+    ranges = {}
+    for category in table:
+        ranges[category["key"]] = category["start"], category["end"]
+        for sub in category["subs"]:
+            ranges[sub["key"]] = sub["start"], sub["end"]
+    return ranges
+
+
+_base_ranges = _prepare_table(CATEGORY_TABLE)
+HIGHEST_HARDCODED_ID = _find_highest_hardcoded_id()
+_table_state = CATEGORY_TABLE, _base_ranges

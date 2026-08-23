@@ -444,7 +444,7 @@ async def videos(
         video_items, total, next_offset = result
         return {"videos": video_items, "total": total, "next_offset": next_offset}
 
-    category_bounds = _resolve_category(category)
+    category_bounds = await _resolve_category(category)
     if category_bounds is None:
         result = await telegram.list_videos_with_total(
             limit=limit,
@@ -469,17 +469,21 @@ async def videos(
     return {"videos": video_items, "total": total}
 
 
-def _resolve_category(category: str | None) -> tuple[int, int] | None:
+async def _resolve_category(
+    category: str | None,
+) -> tuple[int, int | None] | None:
     if category is None:
         return None
-    bounds = categories.resolve(category)
-    if bounds is None:
-        raise HTTPException(status_code=404, detail="unknown category")
     if channels.active_key() != categories.STUFF_CHANNEL:
         raise HTTPException(
             status_code=400,
             detail="categories unavailable for this channel",
         )
+    # Marker-derived keys exist only after a refresh, so load before resolving.
+    await categories.ensure_fresh()
+    bounds = categories.resolve(category)
+    if bounds is None:
+        raise HTTPException(status_code=404, detail="unknown category")
     return bounds
 
 
