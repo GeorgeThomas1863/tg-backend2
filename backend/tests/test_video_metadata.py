@@ -245,7 +245,7 @@ async def test_enrich_videos_falls_back_to_nulls_on_mongo_failure(monkeypatch):
 
 
 def test_videos_route_merges_caption_and_posted_ts(authed_client, monkeypatch):
-    async def fake_list_videos_with_total(limit=50, before_id=None, offset=0):
+    async def fake_list_videos_with_total(**kwargs):
         return [{"id": 7, "name": "a.mp4"}, {"id": 8, "name": "b.mp4"}], 2
 
     collection = FakeCollection([
@@ -268,7 +268,7 @@ def test_videos_route_merges_caption_and_posted_ts(authed_client, monkeypatch):
 
 
 def test_videos_route_degrades_to_nulls_on_mongo_failure(authed_client, monkeypatch):
-    async def fake_list_videos_with_total(limit=50, before_id=None, offset=0):
+    async def fake_list_videos_with_total(**kwargs):
         return [{"id": 7, "name": "a.mp4"}], 1
 
     collection = FakeCollection(error=RuntimeError("offline"))
@@ -568,7 +568,7 @@ def test_videos_route_blank_search_falls_back_to_normal_listing(authed_client, m
     def fail(search, limit, offset):
         raise AssertionError("blank search must not enter search mode")
 
-    async def fake_list_videos_with_total(limit=50, before_id=None, offset=0):
+    async def fake_list_videos_with_total(**kwargs):
         return [], 0
 
     monkeypatch.setattr(video_metadata, "search_videos", fail)
@@ -584,7 +584,7 @@ def test_videos_route_without_search_param_is_untouched(authed_client, monkeypat
     def fail(search, limit, offset):
         raise AssertionError("no-search requests must never call search_videos")
 
-    async def fake_list_videos_with_total(limit=50, before_id=None, offset=0):
+    async def fake_list_videos_with_total(**kwargs):
         return [{"id": 3, "name": "c.mp4"}], 1
 
     monkeypatch.setattr(video_metadata, "search_videos", fail)

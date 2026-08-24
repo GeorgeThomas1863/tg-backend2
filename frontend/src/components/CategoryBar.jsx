@@ -48,8 +48,10 @@ export function CategoryBar({ categories, loading, selectedKey, onSelect }) {
           aria-haspopup="listbox"
           aria-expanded={isOpen}
           onClick={() => setIsOpen((open) => !open)}
+          title={selection?.label || "All videos"}
         >
-          {selection?.label || "All videos"} <span aria-hidden="true">▾</span>
+          <span className="category-combo-label">{selection?.label || "All videos"}</span>
+          <span className="category-combo-caret" aria-hidden="true">▾</span>
         </button>
         {isOpen && (
           <div className="category-dropdown">
@@ -70,8 +72,8 @@ export function CategoryBar({ categories, loading, selectedKey, onSelect }) {
         )}
       </div>
       {selection && (
-        <span className="category-chip">
-          {selection.label}
+        <span className="category-chip" title={selection.label}>
+          <span className="category-chip-label">{selection.label}</span>
           <button type="button" aria-label="Clear category filter" onClick={() => selectCategory(null)}>✕</button>
         </span>
       )}
@@ -176,7 +178,9 @@ function matchesCategory(item, query) {
 const CATEGORY_STYLES = `
   .category-bar { position: relative; display: flex; align-items: center; gap: 9px; min-height: 48px; border-bottom: 1px solid var(--hairline); }
   .category-combo { position: relative; }
-  .category-combo-button { min-width: 220px; padding: 7px 9px; border: 1px solid var(--hairline); text-align: left; display: flex; justify-content: space-between; }
+  .category-combo-button { min-width: 150px; max-width: 240px; padding: 7px 9px; border: 1px solid var(--hairline); text-align: left; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .category-combo-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .category-combo-caret { flex-shrink: 0; }
   .category-combo-button:hover { border-color: var(--muted); }
   .category-dropdown { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(420px, calc(100vw - 48px)); max-height: 390px; overflow: auto; padding: 8px; background: var(--paper); border: 1px solid var(--muted); box-shadow: 0 14px 32px #20212422; }
   .category-search { width: 100%; margin-bottom: 7px; padding: 7px 8px; color: var(--ink); background: var(--paper); border: 1px solid var(--hairline); font: inherit; }
@@ -187,7 +191,8 @@ const CATEGORY_STYLES = `
   .category-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .category-row-count, .category-row-range { font: 11px var(--font-mono); white-space: nowrap; }
   .category-row-range { color: var(--muted); text-align: right; justify-self: end; }
-  .category-chip { padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--green) 55%, var(--hairline)); background: color-mix(in srgb, var(--green) 8%, var(--paper)); font-size: 11px; }
-  .category-chip button { padding-left: 6px; color: var(--green); }
+  .category-chip { display: inline-flex; align-items: center; max-width: 190px; padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline)); background: color-mix(in srgb, var(--accent) 8%, var(--paper)); font-size: 11px; }
+  .category-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .category-chip button { flex-shrink: 0; padding-left: 6px; color: var(--accent); }
   @media (max-width: 640px) { .category-combo-button { min-width: 180px; } }
 `;

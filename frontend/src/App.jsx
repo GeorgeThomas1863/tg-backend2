@@ -13,7 +13,10 @@ import { ChannelDrawer } from "./components/ChannelDrawer";
 import { JumpControls } from "./components/JumpControls";
 import { TelegramAuthDrawer } from "./components/TelegramAuthDrawer";
 import { CategoryBar } from "./components/CategoryBar";
+import { AlphaCategoryBar } from "./components/AlphaCategoryBar";
+import { SortControl } from "./components/SortControl";
 import { FloodAlert } from "./components/FloodAlert";
+import { BulkCacheButton } from "./components/BulkCacheButton";
 import { formatAgo, formatSize } from "./format";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -92,14 +95,20 @@ export default function App() {
 
 function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, onOpenTelegram }) {
   const [selectedCategory, setSelectedCategory] = useState(null);
+  const [sortDirection, setSortDirection] = useState("asc");
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useDebouncedValue(searchInput.trim(), SEARCH_DEBOUNCE_MS);
   const categoryData = useCategories();
   const selectedCategoryData = findCategory(categoryData.categories, selectedCategory);
-  const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos(50, selectedCategory, searchTerm);
+  const { videos, total, loading, loadingMore, error, unauthorized, refetch, jumpTo, loadMore } = useVideos(50, selectedCategory, searchTerm, sortDirection);
   const { status, speedBps, togglePaused, saveSettings, clearCache } = useCacheStatus(!loading && !unauthorized && !error);
   const [expandedId, setExpandedId] = useState(null);
-  const [cacheDrawerOpen, setCacheDrawerOpen] = useState(false);
+  const [cacheDrawerOpen, setCacheDrawerOpen] = useState(true);
+  const cacheDrawerVisible = cacheDrawerOpen && Boolean(status);
+  useEffect(() => {
+    document.body.classList.toggle("cache-panel-open", cacheDrawerVisible);
+    return () => document.body.classList.remove("cache-panel-open");
+  }, [cacheDrawerVisible]);
   const sentinelRef = useSentinel(loadMore);
   const observeRow = useVisibleVideos(videos);
   const toggleRow = (id) => setExpandedId((current) => (current === id ? null : id));
@@ -160,15 +169,29 @@ function VideoLibrary({ activeChannel, onOpenChannels, onAuthed, telegramLabel, 
           selectedKey={selectedCategory}
           onSelect={setSelectedCategory}
         />
+        <AlphaCategoryBar
+          categories={categoryData.categories}
+          loading={categoryData.loading}
+          selectedKey={selectedCategory}
+          onSelect={setSelectedCategory}
+        />
+        <SortControl value={sortDirection} onChange={setSortDirection} disabled={Boolean(searchTerm)} />
         <VideoSearchInput value={searchInput} onChange={setSearchInput} onClear={clearSearch} />
+        <BulkCacheButton
+          selectedCategory={selectedCategory}
+          selectedCategoryLabel={selectedCategoryData?.name}
+          videoCount={selectedCategoryData?.count}
+          batch={status?.batch}
+          searchActive={Boolean(searchTerm)}
+        />
       </div>
-      <main key={selectedCategory || "all-videos"}>
+      <main key={`${selectedCategory || "all-videos"}:${sortDirection}`}>
         {videos.length === 0
           ? <div className="page-status">No videos found.</div>
           : buildRowList(videos, expandedId, toggleRow, status, observeRow)}
       </main>
       <div ref={sentinelRef} className="scroll-sentinel" aria-hidden="true" />
-      {cacheDrawerOpen && status && (
+      {cacheDrawerVisible && (
         <CacheDrawer
           videos={videos}
           status={status}

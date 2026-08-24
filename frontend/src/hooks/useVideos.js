@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchVideos } from "../api/client";
 
-export function useVideos(limit = 50, category = null, search = null) {
+export function useVideos(limit = 50, category = null, search = null, sort = "asc") {
   const [videos, setVideos] = useState([]);
   const [total, setTotal] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +29,7 @@ export function useVideos(limit = 50, category = null, search = null) {
     setHasMore(false);
     setLoadingMore(false);
 
-    fetchVideos(buildVideoQuery(limit, category, search))
+    fetchVideos(buildVideoQuery(limit, category, search, sort))
       .then((data) => {
         if (generation !== requestGeneration.current) return;
         setVideos(data.videos);
@@ -52,7 +52,7 @@ export function useVideos(limit = 50, category = null, search = null) {
     return () => {
       if (generation === requestGeneration.current) requestGeneration.current += 1;
     };
-  }, [limit, category, search, fetchCount]);
+  }, [limit, category, search, sort, fetchCount]);
 
   const refetch = () => {
     requestGeneration.current += 1;
@@ -73,7 +73,7 @@ export function useVideos(limit = 50, category = null, search = null) {
     setUnauthorized(false);
 
     try {
-      const data = await fetchVideos(buildVideoQuery(limit, category, search, { offset }));
+      const data = await fetchVideos(buildVideoQuery(limit, category, search, sort, { offset }));
       if (generation !== requestGeneration.current) return;
       setVideos(data.videos);
       setTotal(data.total);
@@ -103,10 +103,10 @@ export function useVideos(limit = 50, category = null, search = null) {
     // loaded — that offset counts raw matches before Telegram resolution
     // drops deleted ids, so it stays valid even when a whole page drops.
     const sentOffset = searchOffsetRef.current;
-    const cursor = search ? { offset: sentOffset } : { beforeId: videos[videos.length - 1].id };
+    const cursor = buildPageCursor(sort, videos, search, sentOffset);
 
     try {
-      const data = await fetchVideos(buildVideoQuery(limit, category, search, cursor));
+      const data = await fetchVideos(buildVideoQuery(limit, category, search, sort, cursor));
       if (generation !== requestGeneration.current) return;
       setVideos((current) => appendNewVideos(current, data.videos));
       setTotal(data.total);
@@ -129,18 +129,27 @@ export function useVideos(limit = 50, category = null, search = null) {
     }
   };
 
-  return { videos, total, loading, loadingMore, hasMore, error, unauthorized, refetch, jumpTo, loadMore };
+  return { videos, total, loading, loadingMore, hasMore, error, unauthorized, sort, refetch, jumpTo, loadMore };
 }
 
-function buildVideoQuery(limit, category, search, cursor = {}) {
+function buildVideoQuery(limit, category, search, sort, cursor = {}) {
   const query = { limit, ...cursor };
-  // Search mode ignores category server-side, so it is never sent alongside it.
+  // Search mode ignores sort/category server-side, so neither is ever sent alongside it.
   if (search) {
     query.search = search;
     return query;
   }
+  query.sort = sort;
   if (category) query.category = category;
   return query;
+}
+
+// Ascending pages forward from the newest-loaded id (afterId); descending pages
+// backward from the oldest-loaded id (beforeId), same as it always has.
+function buildPageCursor(sort, videos, search, sentOffset) {
+  if (search) return { offset: sentOffset };
+  if (sort === "asc") return { afterId: videos[videos.length - 1].id };
+  return { beforeId: videos[videos.length - 1].id };
 }
 
 function calculateHasMore(offset, loadedCount, total, limit, pageCount = loadedCount) {

@@ -160,7 +160,7 @@ async def test_activate_channel_restarts_worker_after_exception(monkeypatch, fai
 def test_videos_returns_envelope_from_telegram(authed_client, monkeypatch):
     videos = [{"id": 7, "name": "a.mp4", "size": 123}]
 
-    async def fake_list_videos_with_total(limit=50, before_id=None, offset=0):
+    async def fake_list_videos_with_total(**kwargs):
         return videos, 19
 
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos_with_total)
@@ -173,7 +173,7 @@ def test_videos_returns_envelope_from_telegram(authed_client, monkeypatch):
 
 
 def test_videos_returns_502_when_telegram_fails(authed_client, monkeypatch):
-    async def fake_list_videos(limit=50, before_id=None, offset=0):
+    async def fake_list_videos(**kwargs):
         return None
 
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos)
@@ -207,17 +207,25 @@ def test_videos_search_success_includes_next_offset(authed_client, monkeypatch):
 def test_videos_passes_before_id_through(authed_client, monkeypatch):
     seen = {}
 
-    async def fake_list_videos(limit=50, before_id=None, offset=0):
-        seen["limit"] = limit
-        seen["before_id"] = before_id
-        seen["offset"] = offset
+    async def fake_list_videos(**kwargs):
+        seen.update(kwargs)
         return [], 0
 
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos)
-    resp = authed_client.get("/api/videos?limit=25&before_id=1234&offset=8")
+    # before_id pages sort=desc, so it must be paired with sort=desc now
+    # that sort defaults to asc (item 2's oldest-first default).
+    resp = authed_client.get("/api/videos?limit=25&before_id=1234&offset=8&sort=desc")
 
     assert resp.status_code == 200
-    assert seen == {"limit": 25, "before_id": 1234, "offset": 8}
+    assert seen == {
+        "limit": 25,
+        "before_id": 1234,
+        "after_id": None,
+        "offset": 8,
+        "cat_start": None,
+        "cat_end": None,
+        "reverse": False,
+    }
 
 
 # --- GET /stream/{msg_id} ---

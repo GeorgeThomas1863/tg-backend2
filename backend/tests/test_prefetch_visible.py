@@ -126,6 +126,42 @@ async def test_set_visible_cancels_inflight_prewarm_download(monkeypatch, tmp_pa
             pass
 
 
+async def test_set_visible_cancels_inflight_batch_download(monkeypatch, tmp_path):
+    """Same preemption as test_set_visible_cancels_inflight_prewarm_download
+    above, but for the batch tier -- set_visible's cancel_active_prewarm_download
+    call targets both ("prewarm", "batch"), but until now only the prewarm
+    half had a test driving a real in-flight download through it."""
+    calls = install_fakes(monkeypatch, tmp_path, [[make_video(9)]], {9: 1, 5: 1})
+    batch_started = asyncio.Event()
+    release = asyncio.Event()
+    fast_download = downloader.download_block
+
+    async def slow_batch_download(msg, idx):
+        if msg.id == 9:
+            batch_started.set()
+            await release.wait()
+        return await fast_download(msg, idx)
+
+    monkeypatch.setattr(downloader, "download_block", slow_batch_download)
+    prefetch.set_batch("test", None, None, 1)
+    worker = asyncio.create_task(prefetch.run_worker())
+    try:
+        await asyncio.wait_for(batch_started.wait(), timeout=1)
+        prefetch.set_visible("test", [5])
+        for _ in range(200):
+            if (5, 0) in calls["downloads"]:
+                break
+            await asyncio.sleep(0)
+        assert calls["downloads"] == [(5, 0)]
+    finally:
+        release.set()
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+
+
 # --- helpers ---
 
 
@@ -142,7 +178,10 @@ def make_message(msg_id, size):
 def install_fakes(monkeypatch, tmp_path, pages, sizes, max_bytes=10_000):
     calls = {"lists": [], "messages": [], "downloads": []}
 
-    async def fake_list_videos(limit, before_id):
+    async def fake_list_videos(limit, before_id, cat_start=None, cat_end=None):
+        # cat_start/cat_end are accepted (and ignored) so this fake also
+        # serves the batch tier's paging, which passes them; the prewarm
+        # tier never does.
         calls["lists"].append((limit, before_id))
         page_index = len(calls["lists"]) - 1
         return pages[min(page_index, len(pages) - 1)]
@@ -169,7 +208,8 @@ def install_fakes(monkeypatch, tmp_path, pages, sizes, max_bytes=10_000):
     prefetch._urgent_empty.set()
     prefetch._work_available = asyncio.Event()
     prefetch._pin = None
-    prefetch._priority = None
+    prefetch.clear_priority()
+    prefetch.clear_batch()
     prefetch._paused = False
     prefetch._active_tier = None
     prefetch._worker_task = None

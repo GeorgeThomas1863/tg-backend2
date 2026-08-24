@@ -5,9 +5,11 @@
 
 const BASE = import.meta.env.VITE_API_BASE;
 
-export async function fetchVideos({ limit = 50, beforeId = null, offset = null, category = null, search = null } = {}) {
+export async function fetchVideos({ limit = 50, beforeId = null, afterId = null, offset = null, category = null, search = null, sort = null } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
+  if (sort) params.set("sort", sort);
   if (beforeId !== null) params.set("before_id", String(beforeId));
+  if (afterId !== null) params.set("after_id", String(afterId));
   if (offset !== null) params.set("offset", String(offset));
   if (category) params.set("category", category);
   if (search) params.set("search", search);
@@ -196,4 +198,12 @@ export function thumbUrl(id) {
 
 export function previewStreamUrl(id, startSeconds) {
   return `${BASE}/stream/${id}?preview=1#t=${startSeconds}`;
+}
+
+export async function requestBatchCache(category) {
+  return mutate("/api/prefetch/batch", "POST", { category }, "BATCH CACHE");
+}
+
+export async function cancelBatchCache() {
+  return mutate("/api/prefetch/batch", "DELETE", null, "CANCEL BATCH CACHE");
 }

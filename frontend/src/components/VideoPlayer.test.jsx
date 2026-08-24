@@ -21,35 +21,42 @@ describe("VideoPlayer", () => {
   });
 
   test("forward skip button advances currentTime by 5s", () => {
-    const { container, getByText } = render(<VideoPlayer video={video} />);
+    const { container, getByRole } = render(<VideoPlayer video={video} />);
 
     const player = container.querySelector("video.player-video");
     player.currentTime = 10;
 
-    fireEvent.click(getByText("5s »"));
+    fireEvent.click(getByRole("button", { name: /forward 5 seconds/i }));
 
     expect(player.currentTime).toBe(15);
   });
 
   test("back skip button rewinds currentTime by 5s", () => {
-    const { container, getByText } = render(<VideoPlayer video={video} />);
+    const { container, getByRole } = render(<VideoPlayer video={video} />);
 
     const player = container.querySelector("video.player-video");
     player.currentTime = 10;
 
-    fireEvent.click(getByText("« 5s"));
+    fireEvent.click(getByRole("button", { name: /back 5 seconds/i }));
 
     expect(player.currentTime).toBe(5);
   });
 
   test("back skip button clamps at 0 instead of going negative", () => {
-    const { container, getByText } = render(<VideoPlayer video={video} />);
+    const { container, getByRole } = render(<VideoPlayer video={video} />);
 
     const player = container.querySelector("video.player-video");
     player.currentTime = 3;
 
-    fireEvent.click(getByText("« 5s"));
+    fireEvent.click(getByRole("button", { name: /back 5 seconds/i }));
 
     expect(player.currentTime).toBe(0);
+  });
+
+  test("skip buttons expose accessible names for forward and back", () => {
+    const { getByRole } = render(<VideoPlayer video={video} />);
+
+    expect(getByRole("button", { name: /forward 5 seconds/i })).toBeInTheDocument();
+    expect(getByRole("button", { name: /back 5 seconds/i })).toBeInTheDocument();
   });
 });

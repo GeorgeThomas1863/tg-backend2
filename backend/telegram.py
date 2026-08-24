@@ -96,9 +96,11 @@ async def list_videos_with_total(
     offset: int = 0,
     cat_start: int | None = None,
     cat_end: int | None = None,
+    after_id: int | None = None,
+    reverse: bool = False,
 ) -> Optional[tuple[list[dict], int | None]]:
     return await _fetch_videos(
-        limit, before_id, offset, cat_start, cat_end
+        limit, before_id, offset, cat_start, cat_end, after_id, reverse
     )
 
 
@@ -108,27 +110,19 @@ async def _fetch_videos(
     offset: int,
     cat_start: int | None = None,
     cat_end: int | None = None,
+    after_id: int | None = None,
+    reverse: bool = False,
 ) -> Optional[tuple[list[dict], int | None]]:
     channel = channels.get_active()
     if channel is None:
         return [], None
+    query = _build_video_query(
+        limit, offset, before_id, after_id, cat_start, cat_end, reverse
+    )
     try:
-        if cat_start is None:
-            msgs = await with_entity_warm(lambda: client.get_messages(
-                channel, limit=limit, offset_id=before_id or 0,
-                add_offset=offset,
-                filter=InputMessagesFilterVideo,
-            ))
-        else:
-            offset_id = before_id or 0
-            if cat_end is not None and (not before_id or before_id > cat_end):
-                offset_id = cat_end
-            msgs = await with_entity_warm(lambda: client.get_messages(
-                channel, limit=limit, offset_id=offset_id,
-                add_offset=offset,
-                filter=InputMessagesFilterVideo,
-                min_id=cat_start,
-            ))
+        msgs = await with_entity_warm(
+            lambda: client.get_messages(channel, **query)
+        )
     except Exception:
         report_error(f"listing videos from {channel!r}")
         return None
@@ -137,6 +131,82 @@ async def _fetch_videos(
     if not isinstance(total, int):
         total = None
     return videos, total
+
+
+def _build_video_query(
+    limit: int,
+    offset: int,
+    before_id: int | None,
+    after_id: int | None,
+    cat_start: int | None,
+    cat_end: int | None,
+    reverse: bool,
+) -> dict:
+    """Build the get_messages() kwargs for one page of the video listing.
+
+    Verified against the installed Telethon source
+    (.venv/Lib/site-packages/telethon/client/messages.py, _MessagesIter._init
+    lines 33-58 and _message_in_range lines 241-255): on every call, only
+    ONE of (offset_id, min_id) or (offset_id, max_id) is folded together to
+    seed the raw request's offset_id, while the other one of that pair is
+    enforced purely client-side as a live per-message stop bound as chunks
+    stream in.
+
+    Descending (reverse=False, Telethon's default — today's exact
+    behavior): the raw offset_id is `max(offset_id, max_id)`. Passing
+    cat_end as max_id directly would therefore re-clamp offset_id back up
+    to cat_end on every paginated call (before_id keeps shrinking as pages
+    advance, but max(before_id, cat_end) would win with cat_end once
+    before_id is smaller) — so cat_end is folded into offset_id manually
+    here instead, only when before_id is missing or stale (past cat_end).
+    cat_start is passed as min_id, which is only the live stop bound in
+    this branch, so it is safe to pass unchanged on every page.
+
+    Ascending (reverse=True): the roles are mirrored, but this fold is not
+    necessary the way cat_end's is above — it is purely defensive. The raw
+    offset_id is `max(offset_id, min_id)`, and after_id only grows away
+    from cat_start as pages advance, so `max(after_id, cat_start)` already
+    resolves correctly on every page whether Telethon computes it itself
+    (by us passing cat_start as min_id) or we fold it into offset_id here
+    instead — unlike before_id, which shrinks toward cat_end and would get
+    re-clamped by Telethon's own max() once it dipped below. cat_end is
+    passed as max_id, which in reverse mode is the live per-message stop
+    bound, safe on every page.
+    """
+    base = {"limit": limit, "add_offset": offset, "filter": InputMessagesFilterVideo}
+
+    if reverse:
+        offset_id = after_id or 0
+        if cat_start is not None and (not after_id or after_id < cat_start):
+            offset_id = cat_start
+        base["offset_id"] = offset_id
+        base["reverse"] = True
+        # Telethon's own reverse-mode chunking (_MessagesIter in
+        # client/messages.py) always sends Telegram
+        # add_offset = (this value) - limit on every call, and Telegram's
+        # raw add_offset always counts from offset_id toward OLDER (lower)
+        # message ids -- reverse=True never flips that, it's purely a
+        # client-side concept. So a positive value here walks the window
+        # further below offset_id; with offset_id pinned at the start of
+        # history (no after_id, no cat_start) or at a category floor
+        # (cat_start), that runs off the bottom of existing ids and
+        # Telegram returns nothing, even though `total` is still reported
+        # correctly (verified live: GET /api/videos?sort=asc&offset=100
+        # returned `videos: []` with `total: 37556` before this fix).
+        # Negating it walks toward NEWER ids instead, which is the
+        # direction ascending pagination actually needs.
+        base["add_offset"] = -offset
+        if cat_end is not None:
+            base["max_id"] = cat_end
+        return base
+
+    offset_id = before_id or 0
+    if cat_end is not None and (not before_id or before_id > cat_end):
+        offset_id = cat_end
+    base["offset_id"] = offset_id
+    if cat_start is not None:
+        base["min_id"] = cat_start
+    return base
 
 
 async def with_entity_warm(run):

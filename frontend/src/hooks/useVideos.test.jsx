@@ -75,6 +75,12 @@ function buildPage(startId, count) {
   return page;
 }
 
+function buildAscendingPage(startId, count) {
+  const page = [];
+  for (let i = 0; i < count; i++) page.push({ id: startId + i });
+  return page;
+}
+
 describe("useVideos pagination", () => {
   test("hasMore is true after a full first page, false after a short one", async () => {
     fetchVideos.mockResolvedValue({ videos: buildPage(100, 50), total: null });
@@ -88,17 +94,94 @@ describe("useVideos pagination", () => {
     expect(short.result.current.hasMore).toBe(false);
   });
 
-  test("loadMore fetches with the last id as beforeId and appends", async () => {
+  test("descending loadMore fetches with the last id as beforeId, never afterId, and appends", async () => {
     fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
       .mockResolvedValueOnce({ videos: buildPage(50, 50), total: null });
-    const { result } = renderHook(() => useVideos(50));
+    const { result } = renderHook(() => useVideos(50, null, null, "desc"));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(() => result.current.loadMore());
 
-    expect(fetchVideos).toHaveBeenLastCalledWith({ limit: 50, beforeId: 51 });
+    const lastCall = fetchVideos.mock.calls[fetchVideos.mock.calls.length - 1][0];
+    expect(lastCall).toEqual({ limit: 50, sort: "desc", beforeId: 51 });
+    expect(lastCall.afterId).toBeUndefined();
     expect(result.current.videos).toHaveLength(100);
     expect(result.current.hasMore).toBe(true);
+  });
+
+  test("ascending loadMore fetches with the last id as afterId, never beforeId, and appends", async () => {
+    fetchVideos.mockResolvedValueOnce({ videos: buildAscendingPage(1, 50), total: null })
+      .mockResolvedValueOnce({ videos: buildAscendingPage(51, 50), total: null });
+    const { result } = renderHook(() => useVideos(50, null, null, "asc"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() => result.current.loadMore());
+
+    const lastCall = fetchVideos.mock.calls[fetchVideos.mock.calls.length - 1][0];
+    expect(lastCall).toEqual({ limit: 50, sort: "asc", afterId: 50 });
+    expect(lastCall.beforeId).toBeUndefined();
+    expect(result.current.videos).toHaveLength(100);
+    expect(result.current.hasMore).toBe(true);
+  });
+
+  test("defaults to ascending sort when no sort arg is given", async () => {
+    fetchVideos.mockResolvedValue({ videos: buildAscendingPage(1, 5), total: 5 });
+
+    renderHook(() => useVideos(50));
+
+    await waitFor(() => expect(fetchVideos).toHaveBeenCalledWith({ limit: 50, sort: "asc" }));
+  });
+
+  test("changing sort clears the list and refetches from page one with no cursor", async () => {
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
+      .mockResolvedValueOnce({ videos: buildAscendingPage(1, 5), total: 5 });
+    const { result, rerender } = renderHook(({ sort }) => useVideos(50, null, null, sort), {
+      initialProps: { sort: "desc" },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.videos).toHaveLength(50);
+
+    rerender({ sort: "asc" });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.videos).toHaveLength(0);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchVideos).toHaveBeenLastCalledWith({ limit: 50, sort: "asc" });
+    expect(result.current.videos).toEqual(buildAscendingPage(1, 5));
+  });
+
+  test("a stale response from before a sort change cannot overwrite the newer request", async () => {
+    let releaseFirst;
+    const stalePage = new Promise((resolve) => { releaseFirst = resolve; });
+    fetchVideos.mockReturnValueOnce(stalePage)
+      .mockResolvedValueOnce({ videos: buildAscendingPage(1, 5), total: 5 });
+    const { result, rerender } = renderHook(({ sort }) => useVideos(50, null, null, sort), {
+      initialProps: { sort: "desc" },
+    });
+
+    rerender({ sort: "asc" });
+    releaseFirst({ videos: buildPage(100, 50), total: null });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.videos).toEqual(buildAscendingPage(1, 5));
+  });
+
+  test("switching from search back to no-search restores cursor paging in the current ascending direction", async () => {
+    fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
+      .mockResolvedValueOnce({ videos: buildAscendingPage(1, 50), total: null })
+      .mockResolvedValueOnce({ videos: buildAscendingPage(51, 10), total: null });
+    const { result, rerender } = renderHook(({ search }) => useVideos(50, null, search, "asc"), {
+      initialProps: { search: "sunset" },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    rerender({ search: "" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchVideos).toHaveBeenLastCalledWith({ limit: 50, sort: "asc" });
+
+    await act(() => result.current.loadMore());
+
+    expect(fetchVideos).toHaveBeenLastCalledWith({ limit: 50, sort: "asc", afterId: 50 });
   });
 
   test("a short page flips hasMore to false and further loadMore calls do not fetch", async () => {
@@ -143,11 +226,11 @@ describe("useVideos pagination", () => {
     expect(result.current.unauthorized).toBe(true);
   });
 
-  test("jumpTo replaces videos and loadMore resumes with the last id without offset", async () => {
+  test("jumpTo replaces videos and loadMore resumes with the last id as beforeId, no offset (descending)", async () => {
     fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: 300 })
       .mockResolvedValueOnce({ videos: buildPage(200, 50), total: 300 })
       .mockResolvedValueOnce({ videos: buildPage(150, 50), total: 300 });
-    const { result } = renderHook(() => useVideos(50));
+    const { result } = renderHook(() => useVideos(50, null, null, "desc"));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(() => result.current.jumpTo(100));
@@ -155,8 +238,25 @@ describe("useVideos pagination", () => {
     expect(result.current.total).toBe(300);
 
     await act(() => result.current.loadMore());
-    expect(fetchVideos).toHaveBeenNthCalledWith(2, { limit: 50, offset: 100 });
-    expect(fetchVideos).toHaveBeenNthCalledWith(3, { limit: 50, beforeId: 151 });
+    expect(fetchVideos).toHaveBeenNthCalledWith(2, { limit: 50, sort: "desc", offset: 100 });
+    expect(fetchVideos).toHaveBeenNthCalledWith(3, { limit: 50, sort: "desc", beforeId: 151 });
+    expect(result.current.videos).toHaveLength(100);
+  });
+
+  test("jumpTo replaces videos and loadMore resumes with the last id as afterId, no offset (ascending)", async () => {
+    fetchVideos.mockResolvedValueOnce({ videos: buildAscendingPage(1, 50), total: 300 })
+      .mockResolvedValueOnce({ videos: buildAscendingPage(101, 50), total: 300 })
+      .mockResolvedValueOnce({ videos: buildAscendingPage(151, 50), total: 300 });
+    const { result } = renderHook(() => useVideos(50, null, null, "asc"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() => result.current.jumpTo(100));
+    expect(result.current.videos[0].id).toBe(101);
+    expect(result.current.total).toBe(300);
+
+    await act(() => result.current.loadMore());
+    expect(fetchVideos).toHaveBeenNthCalledWith(2, { limit: 50, sort: "asc", offset: 100 });
+    expect(fetchVideos).toHaveBeenNthCalledWith(3, { limit: 50, sort: "asc", afterId: 150 });
     expect(result.current.videos).toHaveLength(100);
   });
 
@@ -220,14 +320,22 @@ describe("useVideos search mode", () => {
   test("an empty search restores today's behavior exactly: no search param, loadMore uses beforeId", async () => {
     fetchVideos.mockResolvedValueOnce({ videos: buildPage(100, 50), total: null })
       .mockResolvedValueOnce({ videos: buildPage(50, 50), total: null });
-    const { result } = renderHook(() => useVideos(50, "kink", ""));
+    const { result } = renderHook(() => useVideos(50, "kink", "", "desc"));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(fetchVideos).toHaveBeenCalledWith({ limit: 50, category: "kink" });
+    expect(fetchVideos).toHaveBeenCalledWith({ limit: 50, sort: "desc", category: "kink" });
 
     await act(() => result.current.loadMore());
 
-    expect(fetchVideos).toHaveBeenLastCalledWith({ limit: 50, category: "kink", beforeId: 51 });
+    expect(fetchVideos).toHaveBeenLastCalledWith({ limit: 50, sort: "desc", category: "kink", beforeId: 51 });
+  });
+
+  test("search mode sends no sort and no cursor id even when the hook's sort direction is desc", async () => {
+    fetchVideos.mockResolvedValue({ videos: buildPage(100, 3), total: 3 });
+
+    renderHook(() => useVideos(50, null, "sunset", "desc"));
+
+    await waitFor(() => expect(fetchVideos).toHaveBeenCalledWith({ limit: 50, search: "sunset" }));
   });
 
   test("search cursor uses the server's next_offset, not videos.length, when Telegram drops ids", async () => {

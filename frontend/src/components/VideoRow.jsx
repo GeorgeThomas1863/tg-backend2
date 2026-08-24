@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { previewStreamUrl, thumbUrl } from "../api/client";
+import { previewStreamUrl, requestPriorityCache, thumbUrl } from "../api/client";
 import { VideoPlayer } from "./VideoPlayer";
 import { useHoverPreview } from "../hooks/useHoverPreview";
 import { formatDate, formatDuration, formatSize } from "../format";
@@ -25,6 +25,7 @@ export function VideoRow({
   const chevronClass = isExpanded ? "row-chevron expanded" : "row-chevron";
   const pct = video.size > 0 ? Math.min(100, Math.round((cachedBytes / video.size) * 100)) : 0;
   const fillClass = isDownloading && !paused && pct < 100 ? "cache-strip-fill downloading" : "cache-strip-fill";
+  const showQueueButton = pct === 0 && !isDownloading;
   const label = buildCacheLabel(pct, isDownloading, paused);
   const rowTitle = video.caption || video.name;
   const metaLine = buildMetaLine(video);
@@ -66,7 +67,11 @@ export function VideoRow({
         <div className="cache-strip-track">
           {pct > 0 && <div className={fillClass} style={{ width: `${pct}%` }} />}
         </div>
-        <span className="cache-strip-label">{label}</span>
+        {showQueueButton ? (
+          <CacheQueueButton video={video} />
+        ) : (
+          <span className="cache-strip-label">{label}</span>
+        )}
       </div>
       {isExpanded && (
         <div className="row-panel">
@@ -106,12 +111,86 @@ export function VideoRow({
 
 //---
 
+// pct === 0 && !isDownloading never reaches here — the row renders
+// CacheQueueButton in that slot instead of this text label.
 function buildCacheLabel(pct, isDownloading, paused) {
   if (pct >= 100) return "cached";
   if (isDownloading && paused) return `${pct}% paused`;
   if (isDownloading) return `${pct}% ↓`;
-  if (pct === 0) return "—";
   return `${pct}%`;
+}
+
+// The cache-status poll runs every 3000ms (see App.jsx); a video whose
+// download the backend actually accepted should show real progress within
+// a few of those polls. QUEUE_GRACE_MS is that allowance.
+export const QUEUE_GRACE_MS = 15000;
+
+// Replaces the cache-strip's "—" placeholder for an uncached, idle video: a
+// real button that jumps this video to the front of the download queue
+// (POST /api/prefetch/priority, same endpoint CacheDrawer's "cache now"
+// button uses). stopPropagation guards against the row-header's onToggle
+// and hover-preview handlers even though the strip sits outside that
+// button's subtree today, so a future markup change can't silently wire
+// this click into row expansion.
+//
+// The backend can report success for a job it silently drops later (e.g. a
+// video larger than the cache cap, discovered only when the worker gets to
+// it) — see prefetch.py's select_priority_job. Without a bound, "queued"
+// would then never clear: no failure ever arrives, and the parent keeps
+// rendering this button forever since pct stays 0 and isDownloading stays
+// false. The grace timer below is the fallback that unsticks it regardless
+// of the backend's own validation, since VideoRow (not this component)
+// still unmounts the button the normal way the moment real progress shows.
+function CacheQueueButton({ video }) {
+  const [queued, setQueued] = useState(false);
+  const [error, setError] = useState("");
+  const graceTimer = useRef(null);
+
+  useEffect(() => clearGraceTimer, []);
+
+  function clearGraceTimer() {
+    if (graceTimer.current === null) return;
+    clearTimeout(graceTimer.current);
+    graceTimer.current = null;
+  }
+
+  async function queueNow(event) {
+    event.stopPropagation();
+    setQueued(true);
+    setError("");
+    clearGraceTimer();
+    graceTimer.current = setTimeout(() => {
+      failQueue("No download progress yet — try again.");
+    }, QUEUE_GRACE_MS);
+    try {
+      const result = await requestPriorityCache(video.id);
+      if (!result?.success) failQueue(result?.message || "Unable to queue this video.");
+    } catch (e) {
+      failQueue(e.message || "Unable to queue this video.");
+    }
+  }
+
+  function failQueue(message) {
+    clearGraceTimer();
+    setQueued(false);
+    setError(message);
+  }
+
+  const name = video.caption || video.name;
+  const title = error || "Download now — jumps to the front of the queue";
+
+  return (
+    <button
+      type="button"
+      className={queued ? "cache-strip-queue is-queued" : "cache-strip-queue"}
+      aria-label={`Download ${name} now`}
+      title={title}
+      disabled={queued}
+      onClick={queueNow}
+    >
+      {queued ? "…" : "+"}
+    </button>
+  );
 }
 
 function buildPreviewStart(duration) {

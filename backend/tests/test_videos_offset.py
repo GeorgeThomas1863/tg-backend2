@@ -74,8 +74,8 @@ async def test_total_degrades_to_none_when_result_lacks_total(monkeypatch):
 def test_route_uses_zero_offset_by_default(authed_client, monkeypatch):
     seen = {}
 
-    async def fake_list_videos(limit=50, before_id=None, offset=0):
-        seen["offset"] = offset
+    async def fake_list_videos(**kwargs):
+        seen["offset"] = kwargs["offset"]
         return [], 5
 
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list_videos)

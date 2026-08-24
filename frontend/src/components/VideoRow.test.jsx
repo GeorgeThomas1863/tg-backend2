@@ -1,10 +1,18 @@
-import { describe, test, expect, vi } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
-import { PREVIEW_POPUP_WIDTH, VideoRow } from "./VideoRow";
+import { describe, test, expect, vi, beforeEach } from "vitest";
+import { render, fireEvent, act, waitFor } from "@testing-library/react";
+import { PREVIEW_POPUP_WIDTH, QUEUE_GRACE_MS, VideoRow } from "./VideoRow";
 import * as hoverPreviewModule from "../hooks/useHoverPreview";
+import { requestPriorityCache } from "../api/client";
 
-// No api-client mock: streamUrl/thumbUrl read the VITE_API_BASE pinned in
-// vitest.config.js, and jsdom never actually loads <img>/<video> sources.
+// Partial mock: streamUrl/thumbUrl/previewStreamUrl keep their real
+// implementation (they read the VITE_API_BASE pinned in vitest.config.js,
+// and jsdom never actually loads <img>/<video> sources), but
+// requestPriorityCache is replaced so the queue-button tests control it.
+vi.mock("../api/client", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, requestPriorityCache: vi.fn() };
+});
+
 const video = {
   id: 7,
   name: "clip.mp4",
@@ -14,6 +22,10 @@ const video = {
 };
 
 describe("VideoRow", () => {
+  beforeEach(() => {
+    requestPriorityCache.mockReset();
+  });
+
   test("uses a 720px preview popup width", () => {
     expect(PREVIEW_POPUP_WIDTH).toBe(720);
   });
@@ -43,11 +55,124 @@ describe("VideoRow", () => {
     expect(rowRef).toHaveBeenCalledWith(container.querySelector(".video-row"));
   });
 
-  test("shows no cache progress with default props", () => {
-    const { container, getByText } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+  test("shows a download-now button instead of progress with default props", () => {
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
 
-    expect(getByText("—").className).toBe("cache-strip-label");
+    const button = container.querySelector(".cache-strip-queue");
+    expect(button).not.toBeNull();
+    expect(button.textContent).toBe("+");
+    expect(container.querySelector(".cache-strip-label")).toBeNull();
     expect(container.querySelector(".cache-strip-fill")).toBeNull();
+  });
+
+  test("download-now button is absent once a video has any progress, is downloading, or is fully cached", () => {
+    const partial = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} cachedBytes={video.size * 0.1} />);
+    expect(partial.container.querySelector(".cache-strip-queue")).toBeNull();
+
+    const downloading = render(
+      <VideoRow video={video} isExpanded={false} onToggle={vi.fn()} isDownloading cachedBytes={0} />,
+    );
+    expect(downloading.container.querySelector(".cache-strip-queue")).toBeNull();
+
+    const cached = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} cachedBytes={video.size} />);
+    expect(cached.container.querySelector(".cache-strip-queue")).toBeNull();
+  });
+
+  test("clicking the download-now button queues the video for priority download and does not toggle the row", async () => {
+    requestPriorityCache.mockResolvedValue({ success: true });
+    const onToggle = vi.fn();
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={onToggle} />);
+
+    fireEvent.click(container.querySelector(".cache-strip-queue"));
+
+    expect(requestPriorityCache).toHaveBeenCalledWith(7);
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  test("the download-now button shows a pending state after a successful click", async () => {
+    let resolveRequest;
+    requestPriorityCache.mockReturnValue(new Promise((resolve) => { resolveRequest = resolve; }));
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    const button = container.querySelector(".cache-strip-queue");
+    fireEvent.click(button);
+
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toBe("…");
+    expect(button.className).toContain("is-queued");
+
+    await act(async () => {
+      resolveRequest({ success: true });
+    });
+  });
+
+  test("a failed request re-enables the download-now button and surfaces the error message", async () => {
+    requestPriorityCache.mockResolvedValue({ success: false, message: "No active channel" });
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    const button = container.querySelector(".cache-strip-queue");
+    fireEvent.click(button);
+
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(button.textContent).toBe("+");
+    expect(button.title).toBe("No active channel");
+  });
+
+  test("a rejected request re-enables the download-now button and surfaces the error message", async () => {
+    requestPriorityCache.mockRejectedValue(new Error("network down"));
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    const button = container.querySelector(".cache-strip-queue");
+    fireEvent.click(button);
+
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(button.title).toBe("network down");
+  });
+
+  // Regression test: the backend can report success:true for a priority job
+  // it silently drops later (e.g. an oversized video — see prefetch.py's
+  // select_priority_job), which used to leave this button disabled as "…"
+  // forever, since only a failure response ever cleared the pending state
+  // and no failure ever arrives for a silently-dropped job. This must fail
+  // against the pre-fix code: reverting the CacheQueueButton grace-timer
+  // change and rerunning this test leaves the button stuck at "…" past
+  // QUEUE_GRACE_MS (verified by hand against the prior version).
+  test("a stuck button self-resets after the grace period with no progress or download activity", async () => {
+    vi.useFakeTimers();
+    // Never resolves — same as a request the backend accepted but whose
+    // worker job it later discarded without telling the frontend.
+    requestPriorityCache.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    const button = container.querySelector(".cache-strip-queue");
+    fireEvent.click(button);
+    expect(button.disabled).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_GRACE_MS);
+    });
+
+    const resetButton = container.querySelector(".cache-strip-queue");
+    expect(resetButton.disabled).toBe(false);
+    expect(resetButton.textContent).toBe("+");
+    expect(resetButton.title).not.toBe("Download now — jumps to the front of the queue");
+    vi.useRealTimers();
+  });
+
+  test("the button unmounts cleanly once progress appears, without its grace timer firing into an unmounted component", () => {
+    vi.useFakeTimers();
+    requestPriorityCache.mockReturnValue(new Promise(() => {}));
+    const { container, rerender } = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+
+    fireEvent.click(container.querySelector(".cache-strip-queue"));
+
+    // Progress arrives: VideoRow itself stops rendering the queue button
+    // (showQueueButton flips false), same as before this fix.
+    rerender(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} isDownloading cachedBytes={0} />);
+    expect(container.querySelector(".cache-strip-queue")).toBeNull();
+
+    expect(() => act(() => vi.advanceTimersByTime(QUEUE_GRACE_MS))).not.toThrow();
+    vi.useRealTimers();
   });
 
   test("shows partial cache progress", () => {

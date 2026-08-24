@@ -2,6 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   activateChannel,
   addChannel,
+  cancelBatchCache,
   fetchCacheStatus,
   fetchChannels,
   fetchVideos,
@@ -17,6 +18,7 @@ import {
   postVisibleVideos,
   previewStreamUrl,
   removeChannel,
+  requestBatchCache,
   setDefaultChannel,
   streamUrl,
   thumbUrl,
@@ -75,6 +77,34 @@ describe("fetchVideos", () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=50&before_id=999`);
     expect(fetchMock.mock.calls[1][0]).toBe(`${BASE}/api/videos?limit=50`);
+  });
+
+  test("appends after_id only when provided", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
+
+    await fetchVideos({ limit: 50, afterId: 42 });
+    await fetchVideos({ limit: 50 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=50&after_id=42`);
+    expect(fetchMock.mock.calls[1][0]).toBe(`${BASE}/api/videos?limit=50`);
+  });
+
+  test("appends sort only when provided", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
+
+    await fetchVideos({ limit: 50, sort: "asc" });
+    await fetchVideos({ limit: 50 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=50&sort=asc`);
+    expect(fetchMock.mock.calls[1][0]).toBe(`${BASE}/api/videos?limit=50`);
+  });
+
+  test("combines sort with after_id for ascending pagination requests", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
+
+    await fetchVideos({ limit: 50, sort: "asc", afterId: 42 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE}/api/videos?limit=50&sort=asc&after_id=42`);
   });
 
   test("appends offset only when provided", async () => {
@@ -430,5 +460,47 @@ describe("URL builders", () => {
 
   test("previewStreamUrl builds a preview-flagged URL with a start offset", () => {
     expect(previewStreamUrl(7, 188)).toBe("http://test-api/stream/7?preview=1#t=188");
+  });
+});
+
+describe("requestBatchCache", () => {
+  test("posts the category with credentials and returns parsed JSON", async () => {
+    const response = { success: true, message: "Queued 573 videos", queued: 573 };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(requestBatchCache("wrestling")).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/prefetch/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ category: "wrestling" }),
+    });
+  });
+
+  test("returns the backend message on a non-ok response", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 404, json: async () => ({ message: "Unknown category" }) });
+
+    await expect(requestBatchCache("missing")).resolves.toEqual({ success: false, message: "Unknown category" });
+  });
+});
+
+describe("cancelBatchCache", () => {
+  test("sends DELETE without a body and returns parsed JSON", async () => {
+    const response = { success: true, message: "Batch cancelled" };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+
+    await expect(cancelBatchCache()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`${BASE}/api/prefetch/batch`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    });
+  });
+
+  test("returns a failure result instead of throwing on a network error", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(cancelBatchCache()).resolves.toEqual({ success: false, message: "Failed to fetch" });
   });
 });

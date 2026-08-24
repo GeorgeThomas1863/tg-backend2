@@ -255,7 +255,7 @@ def test_videos_resolves_open_marker_category_on_cold_start(
     monkeypatch.setattr(channels, "active_key", lambda: categories.STUFF_CHANNEL)
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list)
     response = authed_client.get(
-        "/api/videos?category=rk2-crazyasiangf&before_id=40000"
+        "/api/videos?category=rk2-crazyasiangf&before_id=40000&sort=desc"
     )
     assert response.status_code == 200
     assert response.json()["total"] == 2

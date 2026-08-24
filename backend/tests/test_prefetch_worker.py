@@ -518,7 +518,14 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
     async def select_prewarm(slot=0):
         return prewarm_job
 
-    assert prefetch.status() == {"paused": False, "active": None, "active_slots": []}
+    idle_batch = {"active": False, "total": 0, "remaining": 0}
+    assert prefetch.status() == {
+        "paused": False,
+        "active": None,
+        "active_slots": [],
+        "priority_queue": [],
+        "batch": idle_batch,
+    }
 
     monkeypatch.setattr(prefetch, "select_pin_job", select_pin)
     assert await prefetch.select_worker_job() == pin_job
@@ -527,6 +534,8 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
         "paused": False,
         "active": {"msg_id": 1, "tier": "pin"},
         "active_slots": [{"msg_id": 1, "tier": "pin"}],
+        "priority_queue": [],
+        "batch": idle_batch,
     }
 
     prefetch._worker_download_key = None
@@ -539,6 +548,8 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
         "paused": False,
         "active": {"msg_id": 2, "tier": "prewarm"},
         "active_slots": [{"msg_id": 2, "tier": "prewarm"}],
+        "priority_queue": [],
+        "batch": idle_batch,
     }
 
     prefetch.set_paused(True)
@@ -546,6 +557,8 @@ async def test_status_reports_idle_active_tiers_and_paused(tmp_path, monkeypatch
         "paused": True,
         "active": {"msg_id": 2, "tier": "prewarm"},
         "active_slots": [{"msg_id": 2, "tier": "prewarm"}],
+        "priority_queue": [],
+        "batch": idle_batch,
     }
 
 
@@ -609,7 +622,8 @@ def reset_prefetch_state(monkeypatch):
     prefetch._urgent_empty.set()
     prefetch._work_available = asyncio.Event()
     prefetch._pin = None
-    prefetch._priority = None
+    prefetch.clear_priority()
+    prefetch.clear_batch()
     prefetch._worker_task = None
     prefetch._worker_download_task = None
     prefetch._worker_download_key = None

@@ -24,8 +24,11 @@ _urgent_empty.set()
 _work_available = asyncio.Event()
 _select_lock = asyncio.Lock()
 
+PRIORITY_QUEUE_CAP = 100
+BATCH_ENQUEUE_CAP = 5000
+
 _pin: tuple[str, int, int] | None = None
-_priority: tuple[str, int] | None = None
+_priority_queue: list[tuple[str, int]] = []
 _worker_task = None
 _worker_tasks: list[asyncio.Task] = []
 _worker_download_task = None
@@ -58,6 +61,23 @@ _visible_bytes_planned = 0
 _visible_budget_ids: set[int] = set()
 _visible_blocks_by_id: dict[int, list[int]] = {}
 _visible_messages: dict[int, object] = {}
+
+_batch_channel: str | None = None
+_batch_cat_start: int | None = None
+_batch_cat_end: int | None = None
+_batch_total = 0
+_batch_taken = 0
+_batch_page = []
+_batch_page_index = 0
+_batch_cursor = None
+_batch_is_last_page = False
+_batch_blocks_by_id: dict[int, list[int]] = {}
+_batch_messages: dict[int, object] = {}
+_batch_bytes_planned = 0
+_batch_budget_ids: set[int] = set()
+# Bumped whenever a batch pass is replaced or cancelled, so a job that started
+# under the old pass can tell across an await that its state is no longer live.
+_batch_generation = 0
 
 
 # --- public lifecycle + acquisition ---
@@ -118,9 +138,9 @@ def initialize_slots() -> None:
 
 
 def clear_runtime_state() -> None:
-    global _pin, _priority, _worker_download_key, _active_tier, _visible_channel, _visible_ids
+    global _pin, _worker_download_key, _active_tier, _visible_channel, _visible_ids
     _pin = None
-    _priority = None
+    clear_priority()
     _worker_download_key = None
     _active_tier = None
     _visible_channel = None
@@ -134,6 +154,7 @@ def clear_runtime_state() -> None:
     initialize_slots()
     reset_visible_pass()
     reset_prewarm_pass()
+    clear_batch()
 
 
 def set_paused(paused: bool) -> None:
@@ -157,7 +178,18 @@ def status() -> dict:
     if not active_slots and _worker_download_key is not None:
         active_slots.append({"msg_id": _worker_download_key[1], "tier": _active_tier})
     active = active_slots[0] if active_slots else None
-    return {"paused": _paused, "active": active, "active_slots": active_slots}
+    return {
+        "paused": _paused,
+        "active": active,
+        "active_slots": active_slots,
+        "priority_queue": priority_queue_ids(),
+        "batch": batch_status(),
+    }
+
+
+def priority_queue_ids() -> list[int]:
+    """Msg ids currently queued for the priority tier, front first."""
+    return [msg_id for _, msg_id in _priority_queue]
 
 
 def active_download_tasks() -> list[asyncio.Task]:
@@ -178,15 +210,29 @@ def note_playhead(channel_key: str, msg_id: int, block_idx: int) -> None:
 
 
 def set_priority(channel_key: str, msg_id: int) -> None:
-    """Set the one-slot priority job and wake the worker for it."""
-    global _priority
-    _priority = (channel_key, msg_id)
+    """Move a video to the front of the priority queue and wake the worker for it.
+
+    A video already queued is moved rather than duplicated. The queue is
+    capped at PRIORITY_QUEUE_CAP entries, dropping from the tail (the
+    oldest, lowest-priority requests) once it would grow past that.
+    """
+    global _priority_queue
+    entry = (channel_key, msg_id)
+    _priority_queue = [e for e in _priority_queue if e != entry]
+    _priority_queue.insert(0, entry)
+    del _priority_queue[PRIORITY_QUEUE_CAP:]
     _work_available.set()
 
 
 def clear_priority() -> None:
-    global _priority
-    _priority = None
+    """Empty the whole priority queue."""
+    global _priority_queue
+    _priority_queue = []
+
+
+def remove_priority_entry(entry: tuple[str, int]) -> None:
+    if entry in _priority_queue:
+        _priority_queue.remove(entry)
 
 
 def set_visible(channel_key: str, msg_ids: list[int]) -> None:
@@ -200,14 +246,18 @@ def set_visible(channel_key: str, msg_ids: list[int]) -> None:
 
 
 def cancel_active_prewarm_download() -> None:
-    """Stop an in-flight prewarm block so visible work starts immediately."""
+    """Stop an in-flight batch/prewarm block so visible work starts immediately."""
+    cancel_active_download_for_tiers(("prewarm", "batch"))
+
+
+def cancel_active_download_for_tiers(tiers: tuple[str, ...]) -> None:
     for slot, tier in enumerate(_active_tiers):
-        if tier != "prewarm":
+        if tier not in tiers:
             continue
         task = _worker_download_tasks[slot]
         if task is not None and not task.done():
             task.cancel()
-    if not _active_tiers and _active_tier == "prewarm":
+    if not _active_tiers and _active_tier in tiers:
         if _worker_download_task and not _worker_download_task.done():
             _worker_download_task.cancel()
 
@@ -326,6 +376,8 @@ async def run_worker_download(channel_key: str, msg, idx: int, slot: int = 0) ->
             raise
         if _active_tiers[slot] == "visible" and visible_pass_still_on(channel_key, msg.id):
             _visible_blocks_by_id.setdefault(msg.id, []).insert(0, idx)
+        elif _active_tiers[slot] == "batch" and batch_pass_still_on(channel_key, msg.id):
+            _batch_blocks_by_id.setdefault(msg.id, []).insert(0, idx)
     except downloader.PoolUnavailable as error:
         requeue_block(slot, channel_key, msg.id, idx)
         hold_seconds = error.retry_after
@@ -348,6 +400,8 @@ def requeue_block(slot: int, channel_key: str, msg_id: int, idx: int) -> None:
     tier = _active_tiers[slot]
     if tier == "visible" and visible_pass_still_on(channel_key, msg_id):
         _visible_blocks_by_id.setdefault(msg_id, []).insert(0, idx)
+    elif tier == "batch" and batch_pass_still_on(channel_key, msg_id):
+        _batch_blocks_by_id.setdefault(msg_id, []).insert(0, idx)
     elif tier == "prewarm" and msg_id in _prewarm_messages:
         _prewarm_blocks_by_id.setdefault(msg_id, []).insert(0, idx)
 
@@ -382,6 +436,9 @@ async def select_and_reserve_worker_job(slot: int = 0):
     visible_job = await select_visible_job(slot)
     if visible_job is not None:
         return reserve_slot_job(slot, "visible", visible_job)
+    batch_job = await select_batch_job(slot)
+    if batch_job is not None:
+        return reserve_slot_job(slot, "batch", batch_job)
     if not config.PREWARM_ENABLED:
         return None
     prewarm_job = await select_prewarm_job(slot)
@@ -450,39 +507,57 @@ async def select_pin_job(slot: int = 0):
     return None
 
 
-# --- priority (one-slot, jump the queue) ---
+# --- priority (ordered queue, jump the queue) ---
 
 
 async def select_priority_job(slot: int = 0):
-    while _priority is not None:
-        channel_key, msg_id = _priority
+    """Walk the priority queue front to back for the first video worth downloading.
+
+    Entries that are fully cached, oversized, unresolvable, or stored under a
+    channel that is no longer active are removed as the walk passes them.
+    Entries busy in another slot are skipped (not removed) so they can be
+    picked up once that slot frees.
+    """
+    skip_busy: set[tuple[str, int]] = set()
+    while True:
+        entry = next_priority_candidate(skip_busy)
+        if entry is None:
+            return None
+        channel_key, msg_id = entry
         if msg_busy_in_other_slot(msg_id, slot):
-            return None
+            skip_busy.add(entry)
+            continue
         if channels.active_key() != channel_key:
-            clear_priority()
-            return None
+            remove_priority_entry(entry)
+            continue
         try:
             msg = await telegram.get_message(msg_id)
         except Exception:
             report_error(f"resolving priority video {msg_id}")
             return None
-        if _priority is None:
-            return None
-        if _priority != (channel_key, msg_id):
+        if entry not in _priority_queue:
             continue
         if msg_busy_in_other_slot(msg_id, slot):
-            return None
+            skip_busy.add(entry)
+            continue
         if not msg or not msg.file:
-            clear_priority()
-            return None
+            remove_priority_entry(entry)
+            continue
         if msg.file.size > cache.MAX_BYTES:
-            clear_priority()
+            remove_priority_entry(entry)
             continue
         idx = select_priority_block(channel_key, msg_id, msg.file.size)
         if idx is None:
-            clear_priority()
+            remove_priority_entry(entry)
             continue
         return channel_key, msg, idx
+
+
+def next_priority_candidate(skip: set[tuple[str, int]]) -> tuple[str, int] | None:
+    """The first queued entry that hasn't already been ruled out this walk."""
+    for entry in _priority_queue:
+        if entry not in skip:
+            return entry
     return None
 
 
@@ -673,6 +748,230 @@ def reset_visible_pass() -> None:
     _visible_budget_ids = set()
     _visible_blocks_by_id = {}
     _visible_messages = {}
+
+
+# --- batch pass (user-initiated filter/category download) ---
+
+
+async def select_batch_job(slot: int = 0):
+    channel_key = active_batch_channel()
+    if channel_key is None:
+        return None
+    current_id = _slot_msg_ids[slot] if slot < len(_slot_msg_ids) else None
+    current_job = take_batch_video_block(channel_key, current_id)
+    if current_job is not None:
+        return current_job
+    queued_job = take_queued_batch_job(channel_key, slot)
+    if queued_job is not None:
+        return queued_job
+    while True:
+        video = await find_next_batch_video(slot)
+        if video is None:
+            finish_batch_if_drained()
+            return None
+        msg, blocks = video
+        _batch_messages[msg.id] = msg
+        _batch_blocks_by_id[msg.id] = blocks
+        job = take_batch_video_block(channel_key, msg.id)
+        if job is not None:
+            return job
+
+
+def take_queued_batch_job(channel_key: str, slot: int):
+    for msg_id in _batch_messages:
+        if msg_busy_in_other_slot(msg_id, slot):
+            continue
+        job = take_batch_video_block(channel_key, msg_id)
+        if job is not None:
+            return job
+    return None
+
+
+def take_batch_video_block(channel_key: str, msg_id: int | None):
+    if msg_id is None or msg_id not in _batch_blocks_by_id:
+        return None
+    blocks = _batch_blocks_by_id[msg_id]
+    if not blocks:
+        return None
+    return channel_key, _batch_messages[msg_id], blocks.pop(0)
+
+
+async def find_next_batch_video(slot: int = 0):
+    generation = _batch_generation
+    while True:
+        video = await take_next_batch_video()
+        if video is None:
+            return None
+        msg = await resolve_batch_message(video["id"])
+        if batch_pass_superseded(generation):
+            return None
+        if not msg or not msg.file:
+            continue
+        if msg_busy_in_other_slot(msg.id, slot):
+            continue
+        channel_key = active_batch_channel()
+        if channel_key is None:
+            return None
+        # Budget by full file size, and skip (not halt) a video that would
+        # cross the cap -- a bulk user job must keep going, unlike prewarm.
+        if not reserve_batch_budget(msg):
+            continue
+        blocks, _ = build_uncached_blocks(channel_key, msg.id, msg.file.size)
+        if not blocks:
+            continue
+        return msg, blocks
+
+
+async def take_next_batch_video():
+    global _batch_page_index, _batch_taken
+    if _batch_taken >= BATCH_ENQUEUE_CAP:
+        finish_batch_pass()
+        return None
+    if _batch_page_index >= len(_batch_page):
+        loaded = await load_next_batch_page()
+        if not loaded:
+            return None
+    video = _batch_page[_batch_page_index]
+    _batch_page_index += 1
+    _batch_taken += 1
+    return video
+
+
+async def load_next_batch_page() -> bool:
+    global _batch_page, _batch_page_index, _batch_cursor, _batch_is_last_page
+    if _batch_is_last_page:
+        finish_batch_pass()
+        return False
+    generation = _batch_generation
+    page = await list_batch_page()
+    # A replacement pass arrived mid-listing: these ids belong to the range the
+    # user just abandoned, and finishing/paging here would corrupt the new pass.
+    if batch_pass_superseded(generation):
+        return False
+    if not page:
+        finish_batch_pass()
+        return False
+    _batch_page = page
+    _batch_page_index = 0
+    _batch_cursor = page[-1]["id"]
+    _batch_is_last_page = len(page) < 50
+    return True
+
+
+async def list_batch_page():
+    """Fetch one page of ids in the batch range, or None if the listing failed."""
+    try:
+        page = await telegram.list_videos(
+            limit=50,
+            before_id=_batch_cursor,
+            cat_start=_batch_cat_start,
+            cat_end=_batch_cat_end,
+        )
+    except Exception:
+        report_error("listing batch videos")
+        return None
+    if page is None:
+        print("PREFETCH listing batch videos failed; batch download stopped")
+        return None
+    return page
+
+
+async def resolve_batch_message(msg_id: int):
+    try:
+        return await telegram.get_message(msg_id)
+    except Exception:
+        report_error(f"resolving batch video {msg_id}")
+        return None
+
+
+def reserve_batch_budget(msg) -> bool:
+    global _batch_bytes_planned
+    if msg.id in _batch_budget_ids:
+        return True
+    # Budget by full file size so a batch download never evicts its own videos.
+    if _batch_bytes_planned + msg.file.size > cache.MAX_BYTES:
+        return False
+    _batch_bytes_planned += msg.file.size
+    _batch_budget_ids.add(msg.id)
+    return True
+
+
+def active_batch_channel() -> str | None:
+    """Return the batch pass's channel only while it is still active."""
+    channel_key = channels.active_key()
+    if channel_key is None or channel_key != _batch_channel:
+        return None
+    return channel_key
+
+
+def batch_pass_still_on(channel_key: str, msg_id: int) -> bool:
+    return msg_id in _batch_messages and active_batch_channel() == channel_key
+
+
+def batch_pass_superseded(generation: int) -> bool:
+    """True once set_batch/clear_batch replaced the pass a job started under."""
+    return generation != _batch_generation
+
+
+def finish_batch_pass() -> None:
+    global _batch_page, _batch_page_index, _batch_is_last_page
+    _batch_page = []
+    _batch_page_index = 0
+    _batch_is_last_page = True
+
+
+def finish_batch_if_drained() -> None:
+    """Clear the batch channel once enumeration is exhausted and nothing is queued."""
+    global _batch_channel
+    if _batch_channel is None or not _batch_is_last_page:
+        return
+    if any(blocks for blocks in _batch_blocks_by_id.values()):
+        return
+    _batch_channel = None
+
+
+def reset_batch_pass() -> None:
+    global _batch_page, _batch_page_index, _batch_cursor, _batch_is_last_page
+    global _batch_taken, _batch_blocks_by_id, _batch_messages
+    global _batch_bytes_planned, _batch_budget_ids, _batch_generation
+    _batch_generation += 1
+    _batch_page = []
+    _batch_page_index = 0
+    _batch_cursor = None
+    _batch_is_last_page = False
+    _batch_taken = 0
+    _batch_blocks_by_id = {}
+    _batch_messages = {}
+    _batch_bytes_planned = 0
+    _batch_budget_ids = set()
+
+
+def set_batch(channel_key: str, cat_start: int | None, cat_end: int | None, total: int) -> None:
+    """Start (or replace) a batch download pass over a category/channel range."""
+    global _batch_channel, _batch_cat_start, _batch_cat_end, _batch_total
+    _batch_channel = channel_key
+    _batch_cat_start = cat_start
+    _batch_cat_end = cat_end
+    _batch_total = total
+    reset_batch_pass()
+    # Cancel the superseded pass's own block too, not just prewarm: it belongs
+    # to the range the user just replaced and would hold a slot to finish it.
+    cancel_active_download_for_tiers(("prewarm", "batch"))
+    _work_available.set()
+
+
+def clear_batch() -> None:
+    """Cancel the batch pass, including a block already in flight."""
+    global _batch_channel, _batch_total
+    _batch_channel = None
+    _batch_total = 0
+    reset_batch_pass()
+    cancel_active_download_for_tiers(("batch",))
+
+
+def batch_status() -> dict:
+    remaining = max(_batch_total - _batch_taken, 0)
+    return {"active": _batch_channel is not None, "total": _batch_total, "remaining": remaining}
 
 
 # --- prewarm pass ---

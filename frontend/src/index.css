@@ -1,5 +1,5 @@
-/* Ledger design system — paper, ink, hairlines, mono numerals, quiet green.
-   Green (--green) is reserved for interactive affordances only. */
+/* Ledger design system — paper, ink, hairlines, mono numerals, muted blue.
+   Accent (--accent) is reserved for interactive affordances only. */
 
 :root {
   --paper: #fcfcfb;
@@ -7,7 +7,7 @@
   --muted: #80838a;
   --hairline: #ececea;
   --hover: #f4f4f2;
-  --green: #337a5b;
+  --accent: #3a6ea5;
   --error: #b3392f;
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", Consolas, monospace;
@@ -23,6 +23,7 @@ body {
   background: var(--paper);
   color: var(--ink);
   font: 14px/1.5 var(--font-sans);
+  transition: padding-left 0.2s ease;
 }
 
 button {
@@ -34,7 +35,7 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -44,6 +45,18 @@ button {
   max-width: 960px;
   margin: 0 auto;
   padding: 40px 24px 72px;
+}
+
+/* Pushes .page's centered column right by the cache drawer's width so the
+   permanently-visible panel never overlaps content instead of covering it.
+   Lives on body (the actual scroll container) rather than .page itself so
+   .page keeps auto-centering — via the normal auto-margin algorithm — in
+   whatever width remains; the mobile media query below cancels it since the
+   drawer is a full-bleed overlay there instead. padding-left (never `auto`)
+   is what actually transitions smoothly; .page's own margin just reflows
+   each frame as body's content box narrows. */
+body.cache-panel-open {
+  padding-left: 500px;
 }
 
 .page-status {
@@ -84,7 +97,7 @@ button {
 }
 
 .channel-header-btn {
-  color: var(--green);
+  color: var(--accent);
   font: 13.5px var(--font-mono);
   padding: 2px 0;
 }
@@ -120,7 +133,7 @@ button {
 }
 
 .jump-controls-button {
-  color: var(--green);
+  color: var(--accent);
   font: inherit;
 }
 
@@ -128,7 +141,7 @@ button {
 .cache-pause-btn,
 .telegram-header-btn {
   font: 13.5px var(--font-mono);
-  color: var(--green);
+  color: var(--accent);
   border: 1px solid var(--hairline);
   border-radius: 999px;
   padding: 2px 10px;
@@ -224,10 +237,12 @@ button {
   position: relative;
   display: flex;
   align-items: center;
+  flex: 1 1 130px;
+  min-width: 130px;
 }
 
 .video-search-input {
-  width: 220px;
+  width: 100%;
   padding: 7px 28px 7px 9px;
   border: 1px solid var(--hairline);
   color: var(--ink);
@@ -246,15 +261,104 @@ button {
 .video-search-clear {
   position: absolute;
   right: 7px;
-  color: var(--green);
+  color: var(--accent);
   font-size: 15px;
   line-height: 1;
   padding: 2px;
 }
 
 @media (max-width: 640px) {
-  .video-search-input {
-    width: 180px;
+  .video-search-wrap {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+}
+
+.sort-control {
+  display: flex;
+  border: 1px solid var(--hairline);
+}
+
+.sort-control-btn {
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sort-control-btn:not(:first-child) {
+  border-left: 1px solid var(--hairline);
+}
+
+.sort-control-btn:hover:not(:disabled) {
+  border-color: var(--muted);
+  color: var(--ink);
+}
+
+.sort-control-btn[aria-pressed="true"] {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 12%, var(--paper));
+  font-weight: 600;
+}
+
+.sort-control-btn:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.bulk-cache {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bulk-cache-btn {
+  max-width: 260px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+  background: var(--paper);
+  font: 13px var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bulk-cache-btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.bulk-cache-btn-confirm {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.bulk-cache-btn-cancel {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.bulk-cache-btn:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.bulk-cache-progress {
+  font: 12px var(--font-mono);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.bulk-cache-error {
+  font-size: 11px;
+  color: var(--error);
+}
+
+@media (max-width: 640px) {
+  .bulk-cache-btn {
+    font-size: 12px;
   }
 }
 
@@ -320,7 +424,7 @@ button {
 
 .preview-popup-progress-fill {
   height: 100%;
-  background: var(--green);
+  background: var(--accent);
 }
 
 .row-title-wrap {
@@ -353,7 +457,7 @@ button {
 }
 
 .row-chevron {
-  color: var(--green);
+  color: var(--accent);
   opacity: 0;
   text-align: right;
   transition: opacity 0.12s, transform 0.12s;
@@ -388,7 +492,7 @@ button {
 .cache-strip-fill {
   height: 100%;
   border-radius: 2px;
-  background: var(--green);
+  background: var(--accent);
 }
 
 .cache-strip-fill.downloading {
@@ -411,6 +515,28 @@ button {
   color: var(--muted);
   font: 10.5px var(--font-mono);
   text-align: right;
+}
+
+.cache-strip-queue {
+  min-width: 64px;
+  padding: 1px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  color: var(--muted);
+  font: 10.5px var(--font-mono);
+  line-height: 1.4;
+  text-align: center;
+}
+
+.cache-strip-queue:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.cache-strip-queue:disabled,
+.cache-strip-queue.is-queued {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /*--- expanded player panel ---*/
@@ -445,14 +571,12 @@ button {
 
 .player-skip {
   position: absolute;
-  bottom: 60px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  padding: 0;
   color: #fff;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.02em;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.65));
   opacity: 0.55;
   transition: opacity 0.15s ease;
 }
@@ -463,11 +587,11 @@ button {
 }
 
 .player-skip-back {
-  left: 10px;
+  left: 16px;
 }
 
 .player-skip-forward {
-  right: 10px;
+  right: 16px;
 }
 
 .player-meta {
@@ -500,7 +624,7 @@ button {
   top: 0;
   left: 0;
   bottom: 0;
-  width: min(400px, 100vw);
+  width: min(500px, 100vw);
   padding: 20px 18px;
   background: var(--paper);
   border-right: 1px solid var(--hairline);
@@ -539,7 +663,7 @@ button {
 
 .cache-drawer-gauge-fill {
   height: 100%;
-  background: var(--green);
+  background: var(--accent);
 }
 
 .cache-drawer-settings {
@@ -579,7 +703,7 @@ button {
 .cache-drawer-settings-confirm button,
 .cache-drawer-clear,
 .cache-drawer-clear-actions button {
-  color: var(--green);
+  color: var(--accent);
   font: 12.5px var(--font-mono);
 }
 
@@ -656,7 +780,7 @@ button {
 }
 
 .cache-drawer-item-queue:hover:not(:disabled) {
-  color: var(--green);
+  color: var(--accent);
 }
 
 .cache-drawer-item-queue:disabled {
@@ -736,7 +860,7 @@ button {
 }
 
 .channel-drawer-badge.active {
-  color: var(--green);
+  color: var(--accent);
 }
 
 .channel-drawer-actions {
@@ -746,7 +870,7 @@ button {
 
 .channel-drawer-actions button,
 .channel-drawer-add-button {
-  color: var(--green);
+  color: var(--accent);
   font: 10.5px var(--font-mono);
 }
 
@@ -817,7 +941,7 @@ button {
 .telegram-auth-action,
 .telegram-login-button {
   width: fit-content;
-  color: var(--green);
+  color: var(--accent);
   font: 11px var(--font-mono);
 }
 
@@ -837,7 +961,7 @@ button {
 }
 
 .telegram-password-wrapper button {
-  color: var(--green);
+  color: var(--accent);
   font: 10.5px var(--font-mono);
 }
 
@@ -990,6 +1114,13 @@ button {
 @media (max-width: 640px) {
   .page {
     padding: 24px 14px 56px;
+  }
+
+  /* Below this breakpoint the cache drawer goes back to a full-bleed
+     overlay (its own width: min(500px, 100vw) rule already handles that),
+     so the content-push must not apply here. */
+  body.cache-panel-open {
+    padding-left: 0;
   }
 
   /* Big Thumb Stack: full-bleed tall thumb over title/meta, one card per row. */

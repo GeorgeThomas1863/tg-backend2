@@ -2,15 +2,26 @@
 session
 *.session
 *.session-journal
+# scripts/check_playability.py copies the authenticated session here per run.
+# Redundant with *.session above, and deliberately so: this copy is full
+# account access sitting in a committed directory, so it stays named even if
+# the broad rule above is ever narrowed.
+backend/scripts/.probe_session.session*
 
 # Python / uv
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
 .pytest_cache/
+*.egg-info/
 
-# uv test-run lock artifacts
+# uv/pytest test-run scratch — agent runs have created all of these
 backend/.test-tmp/
+backend/.uvcache/
+backend/.pytest-tmp/
+backend/.Codex/
 
 # Video block + thumbnail cache — bulk data, never commit
 backend/cache/
@@ -18,6 +29,8 @@ backend/cache/
 todo.txt
 todo-videos.txt
 in-progress.txt
+answers.txt
+
 
 docs/
 

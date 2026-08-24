@@ -166,7 +166,7 @@ async def test_priority_slot_cleared_when_file_fully_cached(tmp_path, monkeypatc
     prefetch.set_priority("test", 5)
 
     assert await prefetch.select_priority_job() is None
-    assert prefetch._priority is None
+    assert prefetch._priority_queue == []
 
 
 async def test_priority_oversized_file_skipped_and_cleared(tmp_path, monkeypatch):
@@ -180,7 +180,7 @@ async def test_priority_oversized_file_skipped_and_cleared(tmp_path, monkeypatch
     prefetch.set_priority("test", 6)
 
     assert await prefetch.select_priority_job() is None
-    assert prefetch._priority is None
+    assert prefetch._priority_queue == []
 
 
 async def test_priority_cleared_when_stored_channel_is_stale(tmp_path, monkeypatch):
@@ -195,7 +195,7 @@ async def test_priority_cleared_when_stored_channel_is_stale(tmp_path, monkeypat
     prefetch.set_priority("test", 5)
 
     assert await prefetch.select_priority_job() is None
-    assert prefetch._priority is None
+    assert prefetch._priority_queue == []
 
 
 async def test_pin_dropped_when_stored_channel_is_stale(tmp_path, monkeypatch):
@@ -223,7 +223,7 @@ async def test_priority_cleared_when_message_fails_to_resolve(tmp_path, monkeypa
     prefetch.set_priority("test", 5)
 
     assert await prefetch.select_priority_job() is None
-    assert prefetch._priority is None
+    assert prefetch._priority_queue == []
 
 
 async def test_complete_pin_falls_through_to_prewarm(tmp_path, monkeypatch):
@@ -396,7 +396,7 @@ def install_world(tmp_path, monkeypatch):
     prefetch._urgent_empty.set()
     prefetch._work_available.clear()
     prefetch._pin = None
-    prefetch._priority = None
+    prefetch.clear_priority()
     prefetch._worker_task = None
     prefetch._worker_download_task = None
     prefetch._worker_download_key = None
@@ -405,6 +405,7 @@ def install_world(tmp_path, monkeypatch):
     prefetch._visible_ids = []
     prefetch.reset_visible_pass()
     prefetch.reset_prewarm_pass()
+    prefetch.clear_batch()
 
 
 def make_msg(msg_id, file_size):

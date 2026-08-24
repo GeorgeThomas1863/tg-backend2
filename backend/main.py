@@ -4,6 +4,7 @@ All Telegram work is delegated to the telegram module.
 """
 
 from contextlib import asynccontextmanager
+from typing import Literal
 import asyncio
 import logging
 import shutil
@@ -104,6 +105,10 @@ class VisibleVideosBody(BaseModel):
 
 class PriorityVideoBody(BaseModel):
     id: int
+
+
+class BatchDownloadBody(BaseModel):
+    category: str | None = None
 
 
 class CacheSettingsBody(BaseModel):
@@ -226,6 +231,8 @@ async def cache_status():
         "paused": worker["paused"],
         "active": worker["active"],
         "active_slots": worker["active_slots"],
+        "priority_queue": worker["priority_queue"],
+        "batch": worker["batch"],
         "videos": cache.video_totals(),
         "cache_dir": effective_settings["cache_dir"],
         "max_gb": effective_settings["cache_max_gb"],
@@ -259,11 +266,112 @@ async def set_visible_videos(body: VisibleVideosBody):
 
 @app.post("/api/prefetch/priority", dependencies=[Depends(require_auth)])
 async def set_priority_video(body: PriorityVideoBody):
+    """Queue a video for priority download, rejecting up front whatever the
+    background worker would otherwise have to silently drop later.
+
+    Validated here rather than left to the worker: telegram.get_message is a
+    short-TTL cache (the video was almost always just resolved to list it),
+    so the extra round trip this adds to the request is usually free, and it
+    lets the button get an immediate, honest answer instead of polling for
+    one.
+    """
     channel_key = channels.active_key()
     if channel_key is None:
         return {"success": False, "message": "No active channel"}
+
+    msg = await telegram.get_message(body.id, channel_key)
+    if not msg or not msg.file:
+        return {"success": False, "message": "Video not found"}
+
+    if msg.file.size > cache.MAX_BYTES:
+        return {
+            "success": False,
+            "message": (
+                f"This video is {format_gib(msg.file.size)}, larger than "
+                f"the {format_gib(cache.MAX_BYTES)} cache cap"
+            ),
+        }
+
+    if cache.video_totals().get(msg.id, 0) >= msg.file.size:
+        return {"success": True, "message": "Already fully cached"}
+
     prefetch.set_priority(channel_key, body.id)
     return {"success": True, "message": f"Prioritizing video {body.id}"}
+
+
+def format_gib(num_bytes: float) -> str:
+    """Readable GB size for a user-facing message, e.g. '12.4 GB'."""
+    return f"{num_bytes / 1024**3:.1f} GB"
+
+
+@app.post("/api/prefetch/batch", dependencies=[Depends(require_auth)])
+async def start_batch_download(body: BatchDownloadBody):
+    channel_key = channels.active_key()
+    if channel_key is None:
+        return {"success": False, "message": "No active channel", "queued": 0}
+
+    cat_start, cat_end = await _resolve_category(body.category) or (None, None)
+    total, counts_exact = await _resolve_batch_total(body.category, cat_start, cat_end)
+    if total is None:
+        raise HTTPException(status_code=502, detail="Telegram request failed")
+    queued = min(total, prefetch.BATCH_ENQUEUE_CAP)
+    prefetch.set_batch(channel_key, cat_start, cat_end, queued)
+
+    message = _build_batch_message(queued, total, counts_exact)
+    return {"success": True, "message": message, "queued": queued}
+
+
+async def _resolve_batch_total(
+    category: str | None, cat_start: int | None, cat_end: int | None
+) -> tuple[int | None, bool]:
+    """Return (total, counts_exact) -- the honest denominator for a batch pass.
+
+    A category-scoped request cannot trust Telegram's own count here: any
+    get_messages(filter=InputMessagesFilterVideo) call is routed by Telethon
+    through messages.SearchRequest with min_id/max_id hardcoded to 0
+    server-side (verified against the installed Telethon source,
+    .venv/Lib/site-packages/telethon/client/messages.py) -- cat_start/
+    cat_end never reach Telegram, so the returned count is the whole
+    channel's video total, not the category's. _get_category_count already
+    computes a per-category count from postData1 for the /api/videos route
+    (exact, or -- per categories.get_categories()'s counts_exact flag --
+    estimated if Mongo was unreachable on the last refresh); reuse it here
+    instead of trusting Telegram for a category-bounded request.
+    """
+    if category is not None:
+        total = await _get_category_count(category)
+        category_data = await categories.get_categories()
+        return total, category_data["counts_exact"]
+
+    # A single limit=1 listing carries Telethon's exact match count for the
+    # whole channel, so the honest total is known without paging thousands
+    # of ids up front; the ids themselves are then paged lazily during
+    # worker ticks, exactly like the prewarm tier, so this request never
+    # blocks on them.
+    result = await telegram.list_videos_with_total(
+        limit=1, cat_start=cat_start, cat_end=cat_end
+    )
+    if result is None:
+        return None, True
+    _, total = result
+    return total or 0, True
+
+
+def _build_batch_message(queued: int, total: int, counts_exact: bool) -> str:
+    """Build the batch-start progress message, honest about an estimated total."""
+    qualifier = "" if counts_exact else "approximately "
+    if total > prefetch.BATCH_ENQUEUE_CAP:
+        return (
+            f"Downloading the first {queued} of {qualifier}{total} videos to cache "
+            f"(capped at {prefetch.BATCH_ENQUEUE_CAP})"
+        )
+    return f"Downloading {qualifier}{queued} videos to cache"
+
+
+@app.delete("/api/prefetch/batch", dependencies=[Depends(require_auth)])
+async def stop_batch_download():
+    prefetch.clear_batch()
+    return {"success": True, "message": "Batch download cancelled"}
 
 
 @app.post("/api/cache/clear", dependencies=[Depends(require_auth)])
@@ -430,12 +538,19 @@ def parse_range(range_header: str, file_size: int):
 async def videos(
     limit: int = Query(default=50, ge=0),
     before_id: int | None = None,
+    after_id: int | None = None,
     offset: int = Query(default=0, ge=0),
     category: str | None = None,
     search: str | None = None,
+    sort: Literal["asc", "desc"] = "asc",
 ):
     """List videos, or (when `search` is set) text-search captions instead —
-    before_id and category are ignored in search mode."""
+    sort/before_id/after_id/category are all ignored in search mode.
+
+    `sort=asc` (default) lists oldest-first and pages forward with
+    `after_id`. `sort=desc` lists newest-first (the original behavior) and
+    pages with `before_id`, unchanged. Passing the other direction's cursor
+    is rejected rather than silently mishandled."""
     search = search.strip() if search else None
     if search:
         result = await video_metadata.search_videos(search, limit, offset)
@@ -444,22 +559,18 @@ async def videos(
         video_items, total, next_offset = result
         return {"videos": video_items, "total": total, "next_offset": next_offset}
 
+    _reject_mismatched_cursor(sort, before_id, after_id)
     category_bounds = await _resolve_category(category)
-    if category_bounds is None:
-        result = await telegram.list_videos_with_total(
-            limit=limit,
-            before_id=before_id,
-            offset=offset,
-        )
-    else:
-        cat_start, cat_end = category_bounds
-        result = await telegram.list_videos_with_total(
-            limit=limit,
-            before_id=before_id,
-            offset=offset,
-            cat_start=cat_start,
-            cat_end=cat_end,
-        )
+    cat_start, cat_end = category_bounds if category_bounds else (None, None)
+    result = await telegram.list_videos_with_total(
+        limit=limit,
+        before_id=before_id,
+        after_id=after_id,
+        offset=offset,
+        cat_start=cat_start,
+        cat_end=cat_end,
+        reverse=(sort == "asc"),
+    )
     if result is None:
         raise HTTPException(status_code=502, detail="Telegram request failed")
     video_items, total = result
@@ -467,6 +578,21 @@ async def videos(
     if category is not None:
         total = await _get_category_count(category)
     return {"videos": video_items, "total": total}
+
+
+def _reject_mismatched_cursor(
+    sort: str, before_id: int | None, after_id: int | None
+) -> None:
+    if sort == "asc" and before_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="before_id pages sort=desc; use after_id with sort=asc",
+        )
+    if sort == "desc" and after_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="after_id pages sort=asc; use before_id with sort=desc",
+        )
 
 
 async def _resolve_category(

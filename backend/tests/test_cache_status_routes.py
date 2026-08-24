@@ -24,7 +24,13 @@ def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active, ac
     def fake_status():
         nonlocal status_calls
         status_calls += 1
-        return {"paused": True, "active": active, "active_slots": active_slots}
+        return {
+            "paused": True,
+            "active": active,
+            "active_slots": active_slots,
+            "priority_queue": [7, 9],
+            "batch": {"active": True, "total": 40, "remaining": 12},
+        }
 
     monkeypatch.setattr(prefetch, "status", fake_status)
     monkeypatch.setattr(cache, "current_total", lambda: 1234)
@@ -52,6 +58,8 @@ def test_cache_status_returns_exact_shape(authed_client, monkeypatch, active, ac
         "paused": True,
         "active": active,
         "active_slots": active_slots,
+        "priority_queue": [7, 9],
+        "batch": {"active": True, "total": 40, "remaining": 12},
         "videos": {"11": 100, "22": 200},
         "cache_dir": "/test/cache",
         "max_gb": 12.5,
@@ -87,6 +95,8 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
             "paused": True,
             "active": {"msg_id": 42, "tier": "ahead"},
             "active_slots": [{"msg_id": 42, "tier": "ahead"}],
+            "priority_queue": [],
+            "batch": {"active": False, "total": 0, "remaining": 0},
         },
     )
 
@@ -99,6 +109,8 @@ def test_cache_status_degrades_when_current_total_fails(authed_client, monkeypat
         "paused": True,
         "active": {"msg_id": 42, "tier": "ahead"},
         "active_slots": [{"msg_id": 42, "tier": "ahead"}],
+        "priority_queue": [],
+        "batch": {"active": False, "total": 0, "remaining": 0},
         "videos": {"11": 100},
         "cache_dir": "/fallback/cache",
         "max_gb": 8.0,
