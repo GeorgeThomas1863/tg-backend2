@@ -167,7 +167,16 @@ def test_videos_returns_envelope_from_telegram(authed_client, monkeypatch):
     resp = authed_client.get("/api/videos")
     assert resp.status_code == 200
     assert resp.json() == {
-        "videos": [{"id": 7, "name": "a.mp4", "size": 123, "caption": None, "posted_ts": None}],
+        "videos": [
+            {
+                "id": 7,
+                "name": "a.mp4",
+                "size": 123,
+                "caption": None,
+                "posted_ts": None,
+                "playability": None,
+            }
+        ],
         "total": 19,
     }
 

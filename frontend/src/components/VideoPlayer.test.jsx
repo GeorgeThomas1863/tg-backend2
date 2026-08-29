@@ -59,4 +59,54 @@ describe("VideoPlayer", () => {
     expect(getByRole("button", { name: /forward 5 seconds/i })).toBeInTheDocument();
     expect(getByRole("button", { name: /back 5 seconds/i })).toBeInTheDocument();
   });
+
+  test("decode error (code 3) shows the unsupported-codec message", () => {
+    const { container, getByRole } = render(<VideoPlayer video={video} />);
+
+    const player = container.querySelector("video.player-video");
+    Object.defineProperty(player, "error", { value: { code: 3 }, configurable: true });
+    fireEvent.error(player);
+
+    expect(getByRole("alert")).toHaveTextContent("Can't play this video — unsupported codec (error 3)");
+  });
+
+  test("src-not-supported error (code 4) shows the unsupported-codec message", () => {
+    const { container, getByRole } = render(<VideoPlayer video={video} />);
+
+    const player = container.querySelector("video.player-video");
+    Object.defineProperty(player, "error", { value: { code: 4 }, configurable: true });
+    fireEvent.error(player);
+
+    expect(getByRole("alert")).toHaveTextContent("Can't play this video — unsupported codec (error 4)");
+  });
+
+  test("other error codes show the generic playback error message", () => {
+    const { container, getByRole } = render(<VideoPlayer video={video} />);
+
+    const player = container.querySelector("video.player-video");
+    Object.defineProperty(player, "error", { value: { code: 2 }, configurable: true });
+    fireEvent.error(player);
+
+    expect(getByRole("alert")).toHaveTextContent("Playback error (2)");
+  });
+
+  test("shows no error message when no error has occurred", () => {
+    const { queryByRole } = render(<VideoPlayer video={video} />);
+
+    expect(queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("switching to a different video clears a previous playback error", () => {
+    const { container, getByRole, queryByRole, rerender } = render(<VideoPlayer video={video} />);
+
+    const player = container.querySelector("video.player-video");
+    Object.defineProperty(player, "error", { value: { code: 3 }, configurable: true });
+    fireEvent.error(player);
+
+    expect(getByRole("alert")).toBeInTheDocument();
+
+    rerender(<VideoPlayer video={{ ...video, id: 8 }} />);
+
+    expect(queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

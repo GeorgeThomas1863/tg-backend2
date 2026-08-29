@@ -260,8 +260,14 @@ def test_videos_route_merges_caption_and_posted_ts(authed_client, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "videos": [
-            {"id": 7, "name": "a.mp4", "caption": "A caption", "posted_ts": 1700000000},
-            {"id": 8, "name": "b.mp4", "caption": None, "posted_ts": None},
+            {
+                "id": 7,
+                "name": "a.mp4",
+                "caption": "A caption",
+                "posted_ts": 1700000000,
+                "playability": None,
+            },
+            {"id": 8, "name": "b.mp4", "caption": None, "posted_ts": None, "playability": None},
         ],
         "total": 2,
     }
@@ -280,7 +286,7 @@ def test_videos_route_degrades_to_nulls_on_mongo_failure(authed_client, monkeypa
 
     assert response.status_code == 200
     assert response.json() == {
-        "videos": [{"id": 7, "name": "a.mp4", "caption": None, "posted_ts": None}],
+        "videos": [{"id": 7, "name": "a.mp4", "caption": None, "posted_ts": None, "playability": None}],
         "total": 1,
     }
 
@@ -436,6 +442,7 @@ async def test_search_videos_preserves_relevance_order_and_matches_normal_shape(
         "duration": None,
         "caption": "Nine",
         "posted_ts": 900,
+        "playability": None,
     }
 
 
@@ -594,6 +601,6 @@ def test_videos_route_without_search_param_is_untouched(authed_client, monkeypat
 
     assert response.status_code == 200
     assert response.json() == {
-        "videos": [{"id": 3, "name": "c.mp4", "caption": None, "posted_ts": None}],
+        "videos": [{"id": 3, "name": "c.mp4", "caption": None, "posted_ts": None, "playability": None}],
         "total": 1,
     }

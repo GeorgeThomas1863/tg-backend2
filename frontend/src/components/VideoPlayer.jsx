@@ -1,8 +1,18 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { streamUrl, thumbUrl } from "../api/client";
 import { formatDate, formatDuration, formatSize } from "../format";
 
 const SKIP_SECONDS = 5;
+const UNSUPPORTED_CODEC_CODES = new Set([3, 4]); // MEDIA_ERR_DECODE, MEDIA_ERR_SRC_NOT_SUPPORTED
+
+// Turns a MediaError into the message shown in place of the video surface.
+function describePlaybackError(mediaError) {
+  if (!mediaError) return null;
+  if (UNSUPPORTED_CODEC_CODES.has(mediaError.code)) {
+    return `Can't play this video — unsupported codec (error ${mediaError.code})`;
+  }
+  return `Playback error (${mediaError.code})`;
+}
 
 // iOS-style circular-arrow glyph with the skip amount centered inside. One
 // path is drawn for "forward" (clockwise); "back" mirrors it horizontally so
@@ -50,11 +60,18 @@ function SkipButton({ direction, onClick }) {
 // Pure presentation: takes a video object, knows nothing about fetching.
 export function VideoPlayer({ video }) {
   const videoRef = useRef(null);
+  const [playbackError, setPlaybackError] = useState(null);
 
   useEffect(() => {
     if (!videoRef.current) return;
     videoRef.current.volume = 0.5;
   }, []);
+
+  // A new video (row switched, or the same row re-opened on a different
+  // item) starts clean — a stale error from the last src must not linger.
+  useEffect(() => {
+    setPlaybackError(null);
+  }, [video.id]);
 
   function skip(deltaSeconds) {
     const el = videoRef.current;
@@ -62,20 +79,33 @@ export function VideoPlayer({ video }) {
     el.currentTime = Math.max(0, el.currentTime + deltaSeconds);
   }
 
+  function handleVideoError(event) {
+    setPlaybackError(describePlaybackError(event.currentTarget.error));
+  }
+
   return (
     <div className="player">
       <div className="player-video-wrap">
-        <video
-          ref={videoRef}
-          className="player-video"
-          src={streamUrl(video.id)}
-          poster={thumbUrl(video.id)}
-          controls
-          autoPlay
-          preload="metadata"
-        />
-        <SkipButton direction="back" onClick={() => skip(-SKIP_SECONDS)} />
-        <SkipButton direction="forward" onClick={() => skip(SKIP_SECONDS)} />
+        {playbackError ? (
+          <div className="player-error" role="alert">
+            {playbackError}
+          </div>
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              className="player-video"
+              src={streamUrl(video.id)}
+              poster={thumbUrl(video.id)}
+              controls
+              autoPlay
+              preload="metadata"
+              onError={handleVideoError}
+            />
+            <SkipButton direction="back" onClick={() => skip(-SKIP_SECONDS)} />
+            <SkipButton direction="forward" onClick={() => skip(SKIP_SECONDS)} />
+          </>
+        )}
       </div>
       <dl className="player-meta">
         <div className="player-meta-item">

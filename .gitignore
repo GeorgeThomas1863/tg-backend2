@@ -40,6 +40,10 @@ playgrounds/
 # Secrets — ignore every .env variant
 .env*
 
+# Private channel ID + content taxonomy. NOTE: still tracked — this rule is
+# dormant until `git rm --cached backend/categories.py` unstages it
+backend/categories.py
+
 # Node
 node_modules/
 dist/

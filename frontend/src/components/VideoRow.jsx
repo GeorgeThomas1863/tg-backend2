@@ -29,6 +29,8 @@ export function VideoRow({
   const label = buildCacheLabel(pct, isDownloading, paused);
   const rowTitle = video.caption || video.name;
   const metaLine = buildMetaLine(video);
+  const unplayable = isUnplayableVerdict(video.playability);
+  const rowClass = unplayable ? "video-row unplayable" : "video-row";
   const [previewProgress, setPreviewProgress] = useState(0);
   const { previewing, onMouseEnter, onMouseLeave, onPopupEnter, onPopupLeave } = useHoverPreview(isExpanded);
   // Never trust the hook's previewing state alone: it only tears down via a
@@ -40,7 +42,7 @@ export function VideoRow({
   const popupPosition = usePopupPosition(showPreview, headerRef);
 
   return (
-    <div className="video-row" ref={rowRef}>
+    <div className={rowClass} ref={rowRef}>
       <button
         className="row-header"
         aria-expanded={isExpanded}
@@ -55,6 +57,7 @@ export function VideoRow({
             {rowTitle}
           </span>
           {metaLine && <span className="row-meta">{metaLine}</span>}
+          {unplayable && <span className="row-badge-unplayable">unsupported codec</span>}
         </span>
         <span className="row-col row-col-wide">{formatDate(video.date)}</span>
         <span className="row-col">{formatDuration(video.duration)}</span>
@@ -307,4 +310,16 @@ function buildMetaLine(video) {
 function formatPostedDate(postedTs) {
   if (postedTs == null || !Number.isFinite(postedTs)) return "";
   return formatDate(new Date(postedTs * 1000).toISOString());
+}
+
+// Backend playability verdicts (see backend/scripts/check_playability.py)
+// that mean Chrome/Edge on Windows probably can't play this file. Only
+// these shapes grey the row — null/undefined (older data without the
+// field), "PLAYS", and any other verdict string render it normally. The
+// player's own error message is what actually explains a failure to play.
+function isUnplayableVerdict(verdict) {
+  if (verdict === "FAILS_10BIT") return true;
+  if (verdict === "AUDIO_FAILS") return true;
+  if (typeof verdict === "string" && verdict.startsWith("UNKNOWN_VIDEO_")) return true;
+  return false;
 }

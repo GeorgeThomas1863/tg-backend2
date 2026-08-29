@@ -110,3 +110,37 @@ file, so a run can be interrupted (Ctrl-C) without losing prior progress.
   HTTP endpoints (the same ones the frontend calls), not a direct Mongo or
   Telegram query, so the sampling exercises the real category-resolution
   logic in `categories.py`.
+
+## import_playability.py
+
+One-shot importer that reads a `check_playability.py` results JSON file and
+bulk-upserts one doc per record into the `playability` MongoDB collection, so
+verdicts can be queried without re-running the probe. It is a seeding tool,
+not part of the served app — it does not change how videos are served.
+
+Each doc is `{_id: <msg id>, verdict, video_codec, audio_codec, faststart,
+updated_ts}`, where `video_codec`/`audio_codec` come from the record's
+`ffprobe.video/audio.codec_name` and `updated_ts` is the import time (unix
+seconds). A record missing a usable id or `verdict` is skipped and counted,
+not imported.
+
+### Run
+
+From `backend/`:
+
+```
+uv run python scripts/import_playability.py
+```
+
+### Flags
+
+- `--file PATH` — results JSON path (default
+  `.claude/.tmp/playability-results.json` at the repo root, matching
+  `check_playability.py`'s default `--output`).
+
+### Output
+
+Prints one summary line: `Imported <n>, skipped <n>`. Connects to the same
+`MONGO_URI`/`DB_NAME` the backend uses (via `backend/config.py`), using
+`pymongo`'s `AsyncMongoClient` directly rather than reusing `db.py`, so the
+script has no dependency on the running server's connection lifecycle.

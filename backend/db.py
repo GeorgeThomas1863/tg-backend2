@@ -47,3 +47,10 @@ def postdata_collection():
     if _client is None:
         raise RuntimeError("MongoDB is not connected")
     return _client[DB_NAME]["postData1"]
+
+
+def playability_collection():
+    """Return the playability verdict collection."""
+    if _client is None:
+        raise RuntimeError("MongoDB is not connected")
+    return _client[DB_NAME]["playability"]

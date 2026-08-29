@@ -16,6 +16,7 @@ import logging
 import categories
 import channels
 import db
+import playability
 import telegram
 
 logger = logging.getLogger(__name__)
@@ -171,4 +172,6 @@ async def search_videos(search: str, limit: int, offset: int) -> tuple[list[dict
         return None
 
     video_items = [telegram.media_to_dict(m) for m in messages]
-    return await enrich_videos(video_items), total, next_offset
+    video_items = await enrich_videos(video_items)
+    await playability.enrich_playability(video_items)
+    return video_items, total, next_offset

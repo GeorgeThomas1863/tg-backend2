@@ -457,6 +457,38 @@ describe("VideoRow", () => {
     expect(container.querySelector(".row-meta")).toBeNull();
     expect(container.textContent).not.toMatch(/null|undefined|NaN/);
   });
+
+  test("an UNKNOWN_VIDEO_* playability verdict renders the unsupported-codec badge and the unplayable class", () => {
+    const unplayable = { ...video, playability: "UNKNOWN_VIDEO_mpeg4" };
+    const { container, getByText } = render(<VideoRow video={unplayable} isExpanded={false} onToggle={vi.fn()} />);
+
+    expect(container.querySelector(".video-row").className).toBe("video-row unplayable");
+    expect(getByText("unsupported codec").className).toBe("row-badge-unplayable");
+  });
+
+  test("a PLAYS verdict or a missing playability field render neither the badge nor the unplayable class", () => {
+    const plays = render(<VideoRow video={{ ...video, playability: "PLAYS" }} isExpanded={false} onToggle={vi.fn()} />);
+    expect(plays.container.querySelector(".video-row").className).toBe("video-row");
+    expect(plays.container.querySelector(".row-badge-unplayable")).toBeNull();
+
+    const legacy = render(<VideoRow video={video} isExpanded={false} onToggle={vi.fn()} />);
+    expect(legacy.container.querySelector(".video-row").className).toBe("video-row");
+    expect(legacy.container.querySelector(".row-badge-unplayable")).toBeNull();
+  });
+
+  test("a row showing the unsupported-codec badge still expands into the player on click", () => {
+    const onToggle = vi.fn();
+    const unplayableVideo = { ...video, playability: "AUDIO_FAILS" };
+    const { container, rerender } = render(
+      <VideoRow video={unplayableVideo} isExpanded={false} onToggle={onToggle} />,
+    );
+
+    fireEvent.click(container.querySelector(".row-header"));
+    expect(onToggle).toHaveBeenCalledWith(7);
+
+    rerender(<VideoRow video={unplayableVideo} isExpanded={true} onToggle={onToggle} />);
+    expect(container.querySelector("video")).not.toBeNull();
+  });
 });
 
 //---

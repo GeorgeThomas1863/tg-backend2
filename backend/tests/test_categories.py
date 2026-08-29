@@ -229,7 +229,7 @@ def test_videos_filters_category_and_uses_category_count(
     monkeypatch.setattr(telegram, "list_videos_with_total", fake_list)
     response = authed_client.get("/api/videos?category=old")
     assert response.json() == {
-        "videos": [{"id": 34, "caption": None, "posted_ts": None}],
+        "videos": [{"id": 34, "caption": None, "posted_ts": None, "playability": None}],
         "total": 7,
     }
     assert seen["cat_start"] == 3

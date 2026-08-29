@@ -472,6 +472,22 @@ body.cache-panel-open {
   transform: rotate(90deg);
 }
 
+/* Row stays fully clickable — only the thumb/title are dimmed, and the
+   player's own error message explains the failure when it's opened. */
+.video-row.unplayable .row-thumb,
+.video-row.unplayable .row-title {
+  opacity: 0.5;
+}
+
+.row-badge-unplayable {
+  align-self: flex-start;
+  padding: 1px 6px;
+  color: var(--error);
+  border: 1px solid #d8a29d;
+  border-radius: 999px;
+  font: 600 10px var(--font-mono);
+}
+
 /*--- cache strip ---*/
 
 .cache-strip {
@@ -567,6 +583,20 @@ body.cache-panel-open {
   border-radius: 8px;
   border: 1px solid var(--hairline);
   background: #000;
+}
+
+.player-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: 24px;
+  border-radius: 8px;
+  border: 1px solid var(--error);
+  background: #000;
+  color: var(--error);
+  font-weight: 600;
+  text-align: center;
 }
 
 .player-skip {
@@ -1167,6 +1197,11 @@ body.cache-panel-open {
     grid-area: meta;
     margin-top: 3px;
     white-space: normal;
+  }
+
+  .row-badge-unplayable {
+    justify-self: start;
+    align-self: start;
   }
 
   /* Date/duration/size columns and the chevron drop off the card; the whole

@@ -21,6 +21,7 @@ import categories
 import channels
 import db
 import downloader
+import playability
 import prefetch
 import settings
 import streaming
@@ -575,6 +576,7 @@ async def videos(
         raise HTTPException(status_code=502, detail="Telegram request failed")
     video_items, total = result
     video_items = await video_metadata.enrich_videos(video_items)
+    await playability.enrich_playability(video_items)
     if category is not None:
         total = await _get_category_count(category)
     return {"videos": video_items, "total": total}
