@@ -15,6 +15,7 @@ import cache
 import channels
 import config
 import downloader
+import playability_probe
 import telegram
 
 _block_locks: dict = {}
@@ -41,6 +42,9 @@ _active_tiers: list[str | None] = []
 _slot_msg_ids: list[int | None] = []
 _failed_keys: set[tuple[int, int]] = set()
 _logged_oversized_pins: set[int] = set()
+# The loop keeps only weak refs to tasks; probes are retained here until done
+# so GC cannot drop them mid-run and stop() can cancel them.
+_probe_tasks: set[asyncio.Task] = set()
 
 _prewarm_page = []
 _prewarm_page_index = 0
@@ -97,7 +101,7 @@ async def start() -> None:
 
 
 async def stop() -> None:
-    """Cancel the worker and wait until its download has cleaned up."""
+    """Cancel the workers, downloads, and probes; wait for their cleanup."""
     global _worker_task, _worker_tasks, _worker_download_task
     tasks = list(_worker_tasks)
     if not tasks and _worker_task is not None:
@@ -105,28 +109,27 @@ async def stop() -> None:
     download_tasks = [task for task in _worker_download_tasks if task is not None]
     if not download_tasks and _worker_download_task is not None:
         download_tasks = [_worker_download_task]
+    probe_tasks = list(_probe_tasks)
+    _probe_tasks.clear()
     _worker_task = None
     _worker_tasks = []
-    for task in tasks:
+    for task in [*tasks, *download_tasks, *probe_tasks]:
         task.cancel()
-    for task in download_tasks:
-        task.cancel()
+    await await_cancelled_tasks(tasks, "stopping worker")
+    await await_cancelled_tasks(download_tasks, "stopping worker download")
+    await await_cancelled_tasks(probe_tasks, "stopping playability probe")
+    _worker_download_task = None
+    clear_runtime_state()
+
+
+async def await_cancelled_tasks(tasks: list, context: str) -> None:
     for task in tasks:
         try:
             await task
         except asyncio.CancelledError:
             pass
         except Exception:
-            report_error("stopping worker")
-    for download_task in download_tasks:
-        try:
-            await download_task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            report_error("stopping worker download")
-    _worker_download_task = None
-    clear_runtime_state()
+            report_error(context)
 
 
 def initialize_slots() -> None:
@@ -367,10 +370,12 @@ async def run_worker_download(channel_key: str, msg, idx: int, slot: int = 0) ->
         _worker_download_task = _worker_download_tasks[slot]
         _active_tier = _active_tiers[slot]
     hold_seconds = None
+    download_succeeded = False
     try:
         data = await _worker_download_tasks[slot]
         if data is None:
             raise RuntimeError("background block download returned no data")
+        download_succeeded = True
     except asyncio.CancelledError:
         if asyncio.current_task().cancelling():
             raise
@@ -393,6 +398,25 @@ async def run_worker_download(channel_key: str, msg, idx: int, slot: int = 0) ->
             _active_tier = None
     if hold_seconds is not None:
         await hold_for_pool(slot, hold_seconds)
+    if download_succeeded:
+        schedule_playability_probe(channel_key, msg.id, msg.file.size)
+
+
+def schedule_playability_probe(channel_key: str, msg_id: int, file_size: int) -> None:
+    if not playability_probe.should_probe(channel_key, file_size):
+        return
+    if not playability_probe.has_all_blocks(channel_key, msg_id, file_size):
+        return
+    task = asyncio.create_task(run_playability_probe(channel_key, msg_id, file_size))
+    _probe_tasks.add(task)
+    task.add_done_callback(_probe_tasks.discard)
+
+
+async def run_playability_probe(channel_key: str, msg_id: int, file_size: int) -> None:
+    try:
+        await playability_probe.probe_and_store(channel_key, msg_id, file_size)
+    except Exception:
+        report_error(f"playability probe {msg_id}")
 
 
 def requeue_block(slot: int, channel_key: str, msg_id: int, idx: int) -> None:

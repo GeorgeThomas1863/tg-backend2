@@ -39,19 +39,18 @@ REPO_ROOT = BACKEND_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 import config  # noqa: E402  (needs BACKEND_DIR on sys.path first)
+from playability_probe import (  # noqa: E402
+    check_faststart_bytes,
+    derive_verdict,
+    normalize_codec,
+    summarize_ffprobe,
+)
 
 DEFAULT_OUTPUT = REPO_ROOT / ".claude" / ".tmp" / "playability-results.json"
 PROBE_SESSION_STEM = BACKEND_DIR / "scripts" / ".probe_session"
 # Highest hardcoded category id bound in categories.py as of 2026-08-23; used
 # only as a last-resort estimate of library size if the API can't report one.
 FALLBACK_LIBRARY_ESTIMATE = 38655
-AUDIO_FAIL_CODECS = {"ac3", "eac3", "dts", "truehd"}
-CODEC_ALIASES = {
-    "h264": "h264", "avc": "h264", "avc1": "h264",
-    "h265": "hevc", "hevc": "hevc", "hev1": "hevc", "hvc1": "hevc",
-    "av1": "av1", "av01": "av1",
-    "vp9": "vp9", "vp8": "vp8",
-}
 
 
 # --- CLI ---
@@ -92,47 +91,6 @@ def spread_indices(pool_size: int, pick_count: int) -> list[int]:
 
 def chunk_list(items: list, size: int) -> list[list]:
     return [items[i:i + size] for i in range(0, len(items), size)]
-
-
-def normalize_codec(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    return CODEC_ALIASES.get(raw.lower(), raw.lower())
-
-
-def infer_bit_depth(stream: dict, pix_fmt: str | None) -> int | None:
-    raw_bits = stream.get("bits_per_raw_sample")
-    if raw_bits not in (None, "N/A", "0"):
-        try:
-            return int(raw_bits)
-        except (TypeError, ValueError):
-            pass
-    if pix_fmt and ("10le" in pix_fmt or "10be" in pix_fmt):
-        return 10
-    if pix_fmt:
-        return 8
-    return None
-
-
-def derive_verdict(video_codec: str | None, pix_fmt: str | None, bit_depth: int | None, audio_codec: str | None) -> str:
-    """Chrome/Edge-on-Windows playability verdict from ffprobe ground truth."""
-    is_10bit = bit_depth == 10 or (pix_fmt is not None and ("10le" in pix_fmt or "10be" in pix_fmt))
-    if is_10bit:
-        return "FAILS_10BIT"
-    video_norm = normalize_codec(video_codec)
-    if video_norm is None:
-        return "UNKNOWN_NO_VIDEO_STREAM"
-    if video_norm == "hevc":
-        return "RISK_HEVC"
-    if video_norm == "av1":
-        return "DEPENDS_AV1"
-    if video_norm != "h264":
-        return f"UNKNOWN_VIDEO_{video_norm}"
-    if audio_codec is not None and audio_codec.lower() in AUDIO_FAIL_CODECS:
-        return "AUDIO_FAILS"
-    if audio_codec is None or audio_codec.lower() in ("aac", "mp3"):
-        return "PLAYS"
-    return f"UNKNOWN_AUDIO_{audio_codec}"
 
 
 def compare_codec_agreement(telegram_codec: str | None, ffprobe_codec: str | None) -> str:
@@ -273,37 +231,6 @@ def run_ffprobe(base_url: str, cookie_header: str, msg_id: int, timeout_s: int) 
     return {"error": None, "ms": elapsed_ms, "raw": parsed}
 
 
-def summarize_ffprobe(raw: dict | None) -> dict:
-    streams = raw.get("streams", []) if raw else []
-    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
-    audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
-    return {
-        "video": extract_video_stream_info(video_stream),
-        "audio": extract_audio_stream_info(audio_stream),
-        "format_size": (raw.get("format") or {}).get("size") if raw else None,
-    }
-
-
-def extract_video_stream_info(stream: dict | None) -> dict:
-    if not stream:
-        return {"codec_name": None, "codec_tag_string": None, "profile": None, "pix_fmt": None, "bit_depth": None, "level": None}
-    pix_fmt = stream.get("pix_fmt")
-    return {
-        "codec_name": stream.get("codec_name"),
-        "codec_tag_string": stream.get("codec_tag_string"),
-        "profile": stream.get("profile"),
-        "pix_fmt": pix_fmt,
-        "bit_depth": infer_bit_depth(stream, pix_fmt),
-        "level": stream.get("level"),
-    }
-
-
-def extract_audio_stream_info(stream: dict | None) -> dict:
-    if not stream:
-        return {"codec_name": None, "channels": None}
-    return {"codec_name": stream.get("codec_name"), "channels": stream.get("channels")}
-
-
 async def check_faststart(http_client: httpx.AsyncClient, msg_id: int) -> dict:
     """moov-before-mdat in the first 64KB, per todo-videos.txt's preview-latency question."""
     try:
@@ -312,12 +239,7 @@ async def check_faststart(http_client: httpx.AsyncClient, msg_id: int) -> dict:
         return {"faststart": None, "error": f"faststart probe request failed: {exc}"}
     if resp.status_code not in (200, 206):
         return {"faststart": None, "error": f"faststart probe got HTTP {resp.status_code}"}
-    chunk = resp.content
-    moov_pos, mdat_pos = chunk.find(b"moov"), chunk.find(b"mdat")
-    if moov_pos == -1 and mdat_pos == -1:
-        return {"faststart": None, "error": None}
-    faststart = moov_pos != -1 and (mdat_pos == -1 or moov_pos < mdat_pos)
-    return {"faststart": faststart, "error": None}
+    return {"faststart": check_faststart_bytes(resp.content), "error": None}
 
 
 # --- selection over HTTP (same serving path the frontend uses) ---

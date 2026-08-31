@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import cache
 import config
 import downloader
+import playability_probe
 import prefetch
 import telegram
 from config import BLOCK_SIZE
@@ -26,6 +27,107 @@ async def test_urgent_download_pauses_new_worker_downloads(tmp_path, monkeypatch
     await wait_until(lambda: (1, 0) in world["calls"])
     world["gates"][(1, 0, 1)].set()
     await prefetch.stop()
+
+
+async def test_final_worker_block_schedules_probe_once(tmp_path, monkeypatch):
+    world = install_world(tmp_path, monkeypatch, [make_msg(1, BLOCK_SIZE + 1)])
+    probes = []
+
+    async def fake_probe(channel_key, msg_id, file_size):
+        probes.append((channel_key, msg_id, file_size))
+
+    monkeypatch.setattr(config, "PROBE_ENABLED", True)
+    monkeypatch.setattr(prefetch.channels, "active_key", lambda: "test")
+    monkeypatch.setattr(playability_probe.categories, "STUFF_CHANNEL", "test")
+    monkeypatch.setattr(playability_probe, "probe_and_store", fake_probe)
+    cache.write_block("test", 1, 0, b"first")
+
+    task = asyncio.create_task(
+        prefetch.run_worker_download("test", world["messages"][1], 1)
+    )
+    await wait_until(lambda: (1, 1) in world["calls"])
+    world["gates"][(1, 1, 1)].set()
+    await task
+    await yield_many()
+
+    assert probes == [("test", 1, BLOCK_SIZE + 1)]
+
+
+async def test_nonfinal_worker_block_does_not_schedule_probe(tmp_path, monkeypatch):
+    world = install_world(tmp_path, monkeypatch, [make_msg(2, BLOCK_SIZE + 1)])
+    probes = []
+
+    async def fake_probe(*args):
+        probes.append(args)
+
+    monkeypatch.setattr(config, "PROBE_ENABLED", True)
+    monkeypatch.setattr(prefetch.channels, "active_key", lambda: "test")
+    monkeypatch.setattr(playability_probe.categories, "STUFF_CHANNEL", "test")
+    monkeypatch.setattr(playability_probe, "probe_and_store", fake_probe)
+
+    task = asyncio.create_task(
+        prefetch.run_worker_download("test", world["messages"][2], 0)
+    )
+    await wait_until(lambda: (2, 0) in world["calls"])
+    world["gates"][(2, 0, 1)].set()
+    await task
+    await yield_many()
+
+    assert probes == []
+
+
+async def test_probe_exception_does_not_escape_worker(tmp_path, monkeypatch):
+    world = install_world(tmp_path, monkeypatch, [make_msg(3)])
+
+    async def broken_probe(*args):
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr(config, "PROBE_ENABLED", True)
+    monkeypatch.setattr(prefetch.channels, "active_key", lambda: "test")
+    monkeypatch.setattr(playability_probe.categories, "STUFF_CHANNEL", "test")
+    monkeypatch.setattr(playability_probe, "probe_and_store", broken_probe)
+
+    task = asyncio.create_task(
+        prefetch.run_worker_download("test", world["messages"][3], 0)
+    )
+    await wait_until(lambda: (3, 0) in world["calls"])
+    world["gates"][(3, 0, 1)].set()
+
+    await task
+    await yield_many()
+
+
+async def test_stop_cancels_inflight_probe_task(tmp_path, monkeypatch):
+    world = install_world(tmp_path, monkeypatch, [make_msg(1, BLOCK_SIZE + 1)])
+    probe_started = asyncio.Event()
+    cancelled_ids = []
+
+    async def hanging_probe(channel_key, msg_id, file_size):
+        probe_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled_ids.append(msg_id)
+            raise
+
+    monkeypatch.setattr(config, "PROBE_ENABLED", True)
+    monkeypatch.setattr(prefetch.channels, "active_key", lambda: "test")
+    monkeypatch.setattr(playability_probe.categories, "STUFF_CHANNEL", "test")
+    monkeypatch.setattr(playability_probe, "probe_and_store", hanging_probe)
+    cache.write_block("test", 1, 0, b"first")
+
+    task = asyncio.create_task(
+        prefetch.run_worker_download("test", world["messages"][1], 1)
+    )
+    await wait_until(lambda: (1, 1) in world["calls"])
+    world["gates"][(1, 1, 1)].set()
+    await task
+    await probe_started.wait()
+
+    await prefetch.stop()
+
+    assert cancelled_ids == [1]
+    assert prefetch._probe_tasks == set()
 
 
 async def test_urgent_during_selection_delays_worker_download(tmp_path, monkeypatch):
@@ -631,6 +733,7 @@ def reset_prefetch_state(monkeypatch):
     monkeypatch.setattr(prefetch, "_active_tier", None)
     prefetch._failed_keys.clear()
     prefetch._logged_oversized_pins.clear()
+    prefetch._probe_tasks.clear()
     prefetch.reset_prewarm_pass()
 
 

@@ -66,6 +66,7 @@ PREFETCH_SLOTS = int(os.environ.get("PREFETCH_SLOTS", "2"))
 CACHE_DIR = Path(os.environ.get("CACHE_DIR", str(Path(__file__).resolve().parent / "cache")))
 CACHE_MAX_GB = float(os.environ.get("CACHE_MAX_GB", "100"))
 PREWARM_ENABLED = os.environ.get("PREWARM_ENABLED", "1") != "0"
+PROBE_ENABLED = os.environ.get("PROBE_ENABLED", "1") != "0"
 PREWARM_RESCAN_SECONDS = int(os.environ.get("PREWARM_RESCAN_SECONDS", "600"))
 POOL_RETRY_SECONDS = int(os.environ.get("POOL_RETRY_SECONDS", "30"))
 
